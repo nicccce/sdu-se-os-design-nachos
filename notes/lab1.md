@@ -25,26 +25,97 @@
 
 运行环境：Ubuntu 20.04.3 LTS amd64
 
+
+
 ### 运行环境配置
 
-本实验使用Docker容器进行搭建Ubuntu 20.04.3 LTS amd64的运行环境。
+本实验使用Docker容器进行搭建Ubuntu 20.04 LTS amd64的运行环境。
+
+步骤 1: 拉取 Ubuntu 20.04 镜像
+
+```bash
+sudo docker pull ubuntu:20.04
+```
+
+![image-20251203213141919](lab1.assets/image-20251203213141919.png)
 
 
 
-1. 确保已安装Docker
-2. 使用以下命令启动容器并挂载当前目录：
-   ```bash
-   docker run -it -v $(pwd):~/sdu-se-os-design-nachos ubuntu:20.04.3
-   ```
-3. 进入容器后，安装必要的开发工具：
-   ```bash
-   apt update
-   apt install -y build-essential g++ make git vim
-   ```
-4. 进入挂载的目录开始实验：
-   ```bash
-   cd ~/sdu-se-os-design-nachos
-   ```
+步骤 2: 创建容器并挂载当前目录
 
-这种配置方式确保了在Ubuntu 20.04.3环境下进行实验，避免了环境差异带来的问题。
+```bash
+sudo docker run -d -v $(pwd):/root/sdu-se-os-design-nachos --name nachos-container ubuntu:20.04 tail -f /dev/null
+```
 
+创建后可以看到目录正确挂载：
+
+![image-20251203213608537](lab1.assets/image-20251203213608537.png)
+
+查看内核版本并退出
+
+![image-20251203213734940](lab1.assets/image-20251203213734940.png)
+
+步骤 3: 进入容器的 bash
+
+```bash
+sudo docker exec -it nachos-container bash
+```
+
+更新Ubuntu的源
+
+```bash
+sudo apt update
+```
+
+安装gcc，g++，make，及为编译并运行32位应用需要的一些gcc库
+
+```bash
+sudo apt install -y gcc
+sudo apt install -y g++
+sudo apt install -y make
+sudo apt install -y gcc-multilib g++-multilib
+```
+
+
+
+这是项目目录的截图
+
+![image-20251203220355762](lab1.assets/image-20251203220355762.png)
+
+其中将mip工具的压缩包拷贝到mips-tools
+
+
+
+### 安装MIPS的交叉编译器
+
+```
+sudo tar -xzvf ./gcc-2.8.1-mips.tar.gz
+```
+
+
+
+### 测试Nachos threads
+
+编译：
+
+```
+cd ~/sdu-se-os-design-nachos/code/threads/
+make clean
+make
+```
+
+![image-20251203221131125](lab1.assets/image-20251203221131125.png)
+
+运行：
+
+```
+./nachos
+```
+
+显示如下页：
+
+![image-20251203221214973](lab1.assets/image-20251203221214973.png)
+
+确认转换工具有x权限
+
+![image-20251203221416395](lab1.assets/image-20251203221416395.png)

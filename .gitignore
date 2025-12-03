@@ -1,0 +1,20 @@
+# Build tools and binaries
+mips-tools/
+build/
+dist/
+*.o
+*.out
+*.bin
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# iFlow CLI files
+.iflow/
+
+# OS generated files
+.DS_Store
+Thumbs.db
