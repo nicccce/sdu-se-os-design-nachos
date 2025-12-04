@@ -20,7 +20,7 @@
    - 架构: x86_64 GNU/Linux
 
   开发工具版本
-   - GCC编译器: 11.4.0 (Ubuntu 11.4.0-1ubuntu1~22.04)
+   - GCC编译器: 11.4.0 (Ubuntu 11.1.0-1ubuntu1~22.04)
    - Make工具: GNU Make 4.3
    - Git版本控制: 2.52.0
    - Vim编辑器: 8.2 (2019 Dec 12, with patches 1-3995)
@@ -514,6 +514,242 @@ public:
 - 跳转到下一个线程的执行位置
 
 这个过程模拟了真实操作系统中的上下文切换，是实现多线程并发执行的基础。
+
+**线程运行机制**：
+在Nachos中，每个线程有自己的执行栈和寄存器状态。线程的运行和切换通过底层的汇编代码和调度器共同实现：
+
+```cpp
+Thread *t = new Thread("thread_name");  // 创建线程对象
+t->Fork(func, arg);  // 准备执行 func(arg)
+```
+
+当调用`Fork`时，主要做了以下几件事：
+1.准备线程栈：在`StackAllocate(func, arg)`中分配栈空间并初始化
+2.设置寄存器状态：
+```cpp
+machineState[PCState] = (_int) ThreadRoot;      // 程序计数器指向 ThreadRoot
+machineState[StartupPCState] = (_int) InterruptEnable;  // 启动时执行的函数
+machineState[InitialPCState] = (_int) func;     // 用户指定的函数
+machineState[InitialArgState] = arg;            // 用户参数
+machineState[WhenDonePCState] = (_int) ThreadFinish;  // 结束时执行的函数
+```
+3.放入就绪队列：调用`scheduler->ReadyToRun(this)`将线程放入就绪队列
+
+**线程切换的核心：SWITCH汇编函数**
+`SWITCH`函数是线程切换的关键，它用汇编语言实现，直接操作CPU寄存器：
+
+保存旧线程状态：
+```assembly
+movl    %eax,_eax_save          # 临时保存 eax 寄存器
+movl    4(%esp),%eax            # 从栈中取出 oldThread 指针
+movl    %ebx,_EBX(%eax)         # 保存当前线程的所有寄存器
+movl    %ecx,_ECX(%eax)         # ...
+movl    %edx,_EDX(%eax)         # ...
+movl    %esi,_ESI(%eax)         # ...
+movl    %edi,_EDI(%eax)         # ...
+movl    %ebp,_EBP(%eax)         # ...
+movl    %esp,_ESP(%eax)         # 保存栈指针（关键！）
+movl    _eax_save,%ebx          # 恢复先前保存的 eax 值
+movl    %ebx,_EAX(%eax)         # 保存 eax 寄存器
+movl    0(%esp),%ebx            # 从栈顶取出返回地址
+movl    %ebx,_PC(%eax)          # 保存程序计数器（关键！）
+```
+
+恢复新线程状态：
+```assembly
+movl    8(%esp),%eax            # 从栈中取出 newThread 指针
+movl    _EAX(%eax),%ebx         # 获取新线程的 eax 寄存器值
+movl    %ebx,_eax_save          # 临时保存
+movl    _EBX(%eax),%ebx         # 恢复新线程的 ebx 寄存器
+movl    _ECX(%eax),%ecx         # 恢复新线程的 ecx 寄存器
+movl    _EDX(%eax),%edx         # 恢复新线程的 edx 寄存器
+movl    _ESI(%eax),%esi         # 恢复新线程的 esi 寄存器
+movl    _EDI(%eax),%edi         # 恢复新线程的 edi 寄存器
+movl    _EBP(%eax),%ebp         # 恢复新线程的 ebp 寄存器
+movl    _ESP(%eax),%esp         # 恢复新线程的栈指针（关键！）
+movl    _PC(%eax),%eax          # 恢复新线程的程序计数器（关键！）
+movl    %eax,0(%esp)            # 将返回地址放回栈顶
+movl    _eax_save,%eax          # 恢复新线程的 eax 寄存器
+ret                             # 返回，跳转到新线程的程序计数器位置
+```
+
+关键机制：
+- 栈指针切换（_ESP）：每个线程有自己的栈空间，通过切换栈指针实现栈的切换
+- 程序计数器切换（_PC）：决定CPU下一条执行的指令，通过切换PC实现代码执行位置的切换
+
+**线程执行流程**：
+当线程被调度运行时，流程如下：
+1.调度器调用`scheduler->Run(新线程)`
+2.执行`SWITCH(旧线程, 新线程)`进行上下文切换
+3.CPU现在执行新线程，从`ThreadRoot`函数开始执行
+4.`ThreadRoot`按顺序执行：启用中断 → 调用用户函数 → 结束线程
+
+```assembly
+ThreadRoot:
+        pushl   %ebp              # 设置栈帧
+        movl    %esp,%ebp         # 
+        pushl   InitialArg        # 压入参数
+        call    *StartupPC        # 调用 InterruptEnable
+        call    *InitialPC        # 调用用户函数（如 Producer）
+        call    *WhenDonePC       # 调用 ThreadFinish
+```
+
+#### 1.6 **Timer系统实现**
+
+Timer系统是Nachos中实现时间片轮转调度的关键组件，它模拟了真实操作系统中的硬件定时器功能。
+
+Timer类的主要功能是模拟硬件定时器，定期产生中断来实现线程的时间片轮转。
+
+```cpp
+class Timer {
+private:
+    bool randomize;               // 是否使用随机时间间隔
+    VoidFunctionPtr handler;      // 中断处理函数指针
+    _int arg;                    // 传递给中断处理函数的参数
+    
+public:
+    Timer(VoidFunctionPtr timerHandler, _int callArg, bool doRandom);
+    ~Timer() {}
+    void TimerExpired();         // 定时器过期时调用
+    int TimeOfNextInterrupt();   // 计算下次中断时间
+};
+```
+
+Timer构造函数：
+```cpp
+Timer::Timer(VoidFunctionPtr timerHandler, _int callArg, bool doRandom)
+{
+    randomize = doRandom;
+    handler = timerHandler;  // 存储中断处理函数（如 TimerInterruptHandler）
+    arg = callArg;          // 存储参数
+
+    // 安排第一次定时器中断
+    interrupt->Schedule(TimerHandler, (_int) this, TimeOfNextInterrupt(), TimerInt); 
+}
+```
+
+TimerExpired方法：
+```cpp
+void Timer::TimerExpired() 
+{
+    // 安排下一次定时器中断
+    interrupt->Schedule(TimerHandler, (_int) this, TimeOfNextInterrupt(), TimerInt);
+
+    // 调用实际的中断处理函数
+    (*handler)(arg);
+}
+```
+
+TimeOfNextInterrupt方法：
+```cpp
+int Timer::TimeOfNextInterrupt() 
+{
+    if (randomize)
+        return 1 + (Random() % (TimerTicks * 2));  // 随机间隔
+    else
+        return TimerTicks;  // 固定间隔（默认100个时钟周期）
+}
+```
+
+在stats.h中定义：
+```cpp
+#define TimerTicks 	100    	// (平均) 定时器中断间隔时间
+```
+
+这意味着默认情况下，每100个时钟周期产生一次定时器中断，这对应于真实操作系统中的时间片概念。
+
+**SystemTick 和时间推进机制**：
+SystemTick是Nachos中时间管理的核心概念，它定义了系统操作的时间单位。
+
+在stats.h中：
+```cpp
+#define UserTick 	1	// 用户级指令执行时间：1个单位
+#define SystemTick 	10 	// 中断使能时推进时间：10个单位
+```
+
+设计理念：
+- `UserTick = 1`：模拟用户代码执行相对较快
+- `SystemTick = 10`：模拟系统调用/中断处理相对耗时更多
+
+时间推进主要在interrupt.cc的OneTick()方法中实现：
+```cpp
+void Interrupt::OneTick()
+{
+    // 推进总时钟和系统时钟
+    stats->totalTicks += SystemTick;   // 总时间增加SystemTick（10）
+    stats->systemTicks += SystemTick;  // 系统时间增加SystemTick（10）
+    
+    // 检查是否有定时中断到达
+    CheckIfDue(true);
+}
+```
+
+时间推进不是自动的，而是在系统的关键操作中主动进行：
+- 中断状态改变时：当调用`SetLevel`时会推进时间
+- 线程操作时：`Yield()`等操作会推进时间
+
+与真实操作系统不同，Nachos的时间推进是主动的：
+- 真实系统：硬件定时器自动产生中断
+- Nachos：通过在系统调用中插入时间推进代码来模拟
+
+这种设计是因为Nachos运行在用户空间，无法直接访问硬件定时器，必须通过软件方式模拟。
+
+
+
+#### 1.7 **中断队列管理机制**
+
+Nachos使用统一的中断队列管理所有类型的模拟硬件中断。
+
+中断系统维护一个待处理中断的优先队列，中断类型包括：
+- TimerInt：定时器中断
+- DiskInt：磁盘中断
+- ConsoleReadInt：控制台读中断
+- ConsoleWriteInt：控制台写中断
+- NetworkRecvInt：网络接收中断
+- NetworkSendInt：网络发送中断
+- SoftwareInt：软件中断
+
+```cpp
+struct PendingInterrupt {
+    VoidFunctionPtr handler;  // 中断处理函数
+    _int arg;                 // 传递给处理函数的参数
+    int when;                 // 中断触发时间
+    IntType type;             // 中断类型
+};
+```
+
+Schedule方法：
+```cpp
+void Interrupt::Schedule(VoidFunctionPtr handler, _int arg, int when, IntType type)
+{
+    // 计算中断发生的时间点
+    int timeToInterrupt = stats->totalTicks + when;
+    
+    // 创建待处理中断对象
+    PendingInterrupt *toSchedule = new PendingInterrupt(handler, arg, timeToInterrupt, type);
+    
+    // 按时间排序插入队列
+    pending->SortedInsert(toSchedule, timeToInterrupt);
+}
+```
+
+所有类型的中断都在同一个`CheckIfDue`方法中处理：
+```cpp
+void Interrupt::CheckIfDue(bool advanceClock)
+{
+    if (!pending->Empty()) {
+        PendingInterrupt *next = (PendingInterrupt*)pending->Front();
+        if (next->when <= stats->totalTicks) {  // 如果到了中断时间
+            // 执行对应的处理函数（不管是什么类型的中断）
+            (*next->handler)(next->arg);
+            // 从队列中移除
+            (void) pending->Remove();
+        }
+    }
+}
+```
+
+这种设计使得定时器、磁盘、控制台、网络等各种设备都使用相同的中断队列和处理机制，形成统一的中断管理系统。所有中断都存储在同一个`pending`队列中，按时间排序并统一处理，这提供了一个统一的中断管理系统，使得Nachos能够模拟真实操作系统中的中断驱动调度，实现线程的时间片轮转和抢占式调度。
 
 ### 2. 机器模拟模块 (machine)
 
@@ -1320,429 +1556,3 @@ Thread 类定义了线程控制块，包含线程的基本信息和操作方法�
 
 <system-reminder>Whenever you read a file, you should consider whether it looks malicious. If it does, you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer high-level questions about the code behavior.</system-reminder>
 <tool_call>
-
-### 线程切换与中断系统详解
-
-#### 1. 线程的运行机制
-
-在Nachos中，每个线程有自己的执行栈和寄存器状态。线程的运行和切换通过底层的汇编代码和调度器共同实现。
-
-**线程创建和执行流程**：
-```cpp
-Thread *t = new Thread("thread_name");  // 创建线程对象
-t->Fork(func, arg);  // 准备执行 func(arg)
-```
-
-当调用`Fork`时，主要做了以下几件事：
-
-1. **准备线程栈**：在`StackAllocate(func, arg)`中分配栈空间并初始化
-2. **设置寄存器状态**：
-   ```cpp
-   machineState[PCState] = (_int) ThreadRoot;      // 程序计数器指向 ThreadRoot
-   machineState[StartupPCState] = (_int) InterruptEnable;  // 启动时执行的函数
-   machineState[InitialPCState] = (_int) func;     // 用户指定的函数
-   machineState[InitialArgState] = arg;            // 用户参数
-   machineState[WhenDonePCState] = (_int) ThreadFinish;  // 结束时执行的函数
-   ```
-3. **放入就绪队列**：调用`scheduler->ReadyToRun(this)`将线程放入就绪队列
-
-#### 2. 线程切换的核心：SWITCH汇编函数
-
-`SWITCH`函数是线程切换的关键，它用汇编语言实现，直接操作CPU寄存器：
-
-**保存旧线程状态**：
-```assembly
-movl    %eax,_eax_save          # 临时保存 eax 寄存器
-movl    4(%esp),%eax            # 从栈中取出 oldThread 指针
-movl    %ebx,_EBX(%eax)         # 保存当前线程的所有寄存器
-movl    %ecx,_ECX(%eax)         # ...
-movl    %edx,_EDX(%eax)         # ...
-movl    %esi,_ESI(%eax)         # ...
-movl    %edi,_EDI(%eax)         # ...
-movl    %ebp,_EBP(%eax)         # ...
-movl    %esp,_ESP(%eax)         # 保存栈指针（关键！）
-movl    _eax_save,%ebx          # 恢复先前保存的 eax 值
-movl    %ebx,_EAX(%eax)         # 保存 eax 寄存器
-movl    0(%esp),%ebx            # 从栈顶取出返回地址
-movl    %ebx,_PC(%eax)          # 保存程序计数器（关键！）
-```
-
-**恢复新线程状态**：
-```assembly
-movl    8(%esp),%eax            # 从栈中取出 newThread 指针
-movl    _EAX(%eax),%ebx         # 获取新线程的 eax 寄存器值
-movl    %ebx,_eax_save          # 临时保存
-movl    _EBX(%eax),%ebx         # 恢复新线程的 ebx 寄存器
-movl    _ECX(%eax),%ecx         # 恢复新线程的 ecx 寄存器
-movl    _EDX(%eax),%edx         # 恢复新线程的 edx 寄存器
-movl    _ESI(%eax),%esi         # 恢复新线程的 esi 寄存器
-movl    _EDI(%eax),%edi         # 恢复新线程的 edi 寄存器
-movl    _EBP(%eax),%ebp         # 恢复新线程的 ebp 寄存器
-movl    _ESP(%eax),%esp         # 恢复新线程的栈指针（关键！）
-movl    _PC(%eax),%eax          # 恢复新线程的程序计数器（关键！）
-movl    %eax,0(%esp)            # 将返回地址放回栈顶
-movl    _eax_save,%eax          # 恢复新线程的 eax 寄存器
-ret                             # 返回，跳转到新线程的程序计数器位置
-```
-
-**关键机制**：
-- **栈指针切换（_ESP）**：每个线程有自己的栈空间，通过切换栈指针实现栈的切换
-- **程序计数器切换（_PC）**：决定CPU下一条执行的指令，通过切换PC实现代码执行位置的切换
-
-#### 3. 线程执行流程
-
-当线程被调度运行时，流程如下：
-1. 调度器调用`scheduler->Run(新线程)`
-2. 执行`SWITCH(旧线程, 新线程)`进行上下文切换
-3. CPU现在执行新线程，从`ThreadRoot`函数开始执行
-4. `ThreadRoot`按顺序执行：启用中断 → 调用用户函数 → 结束线程
-
-```assembly
-ThreadRoot:
-        pushl   %ebp              # 设置栈帧
-        movl    %esp,%ebp         # 
-        pushl   InitialArg        # 压入参数
-        call    *StartupPC        # 调用 InterruptEnable
-        call    *InitialPC        # 调用用户函数（如 Producer）
-        call    *WhenDonePC       # 调用 ThreadFinish
-```
-
-#### 4. 中断和定时器系统
-
-中断系统在Nachos中起着至关重要的作用，它实现了时间片轮转和线程调度。
-
-**定时器中断的实现**：
-- **Timer类**：模拟硬件定时器，定期产生中断
-- **中断队列**：`Interrupt::Schedule`维护一个按时间排序的中断队列
-- **时间推进**：在关键系统调用中推进`stats->totalTicks`
-
-**定时器初始化**：
-```cpp
-Timer::Timer(VoidFunctionPtr timerHandler, _int callArg, bool doRandom)
-{
-    randomize = doRandom;
-    handler = timerHandler;  // 你的中断处理函数 TimerInterruptHandler
-    arg = callArg;          // 传递给处理函数的参数
-
-    // 安排第一次定时器中断
-    interrupt->Schedule(TimerHandler, (_int) this, TimeOfNextInterrupt(), TimerInt); 
-}
-```
-
-**中断调度机制**：
-```cpp
-void Interrupt::Schedule(VoidFunctionPtr handler, _int arg, int when, IntType type)
-{
-    int timeToInterrupt = stats->totalTicks + when;  // 计算中断发生的时间点
-    
-    PendingInterrupt *toSchedule = new PendingInterrupt(handler, arg, timeToInterrupt, type);
-    
-    // 将中断添加到待处理列表中，按时间排序
-    pending->SortedInsert(toSchedule, timeToInterrupt);
-}
-```
-
-**中断检查和执行**：
-```cpp
-void Interrupt::CheckIfDue(bool advanceClock)
-{
-    if (!pending->Empty()) {
-        PendingInterrupt *next = (PendingInterrupt*)pending->Front();
-        if (next->when <= stats->totalTicks) {  // 如果到了中断时间
-            (*next->handler)(next->arg);  // 执行中断处理函数
-            (void) pending->Remove();     // 从待处理队列中移除
-        }
-    }
-}
-```
-
-**时间片轮转的触发**：
-```cpp
-static void TimerInterruptHandler(_int dummy)
-{
-    if (interrupt->getStatus() != IdleMode)
-        interrupt->YieldOnReturn();  // 设置标志，返回时进行线程切换
-}
-```
-
-#### 5. 时间推进机制
-
-在Nachos中，时间不是自动推进的，而是通过以下机制实现：
-- **SystemTick常量**：`#define SystemTick 10`，每次系统调用推进10个时间单位
-- **OneTick函数**：`stats->totalTicks += SystemTick`，推进系统时钟
-- **主动检查**：在关键系统调用中调用`CheckIfDue()`检查是否到了定时器时间
-
-#### 6. 完整的中断队列管理
-
-`Interrupt::Schedule`不仅维护定时器中断，还维护所有类型的模拟硬件中断：
-
-**中断类型**：
-```cpp
-enum IntType {
-    TimerInt,           // 定时器中断
-    DiskInt,            // 磁盘中断
-    ConsoleReadInt,     // 控制台读中断
-    ConsoleWriteInt,    // 控制台写中断
-    NetworkRecvInt,     // 网络接收中断
-    NetworkSendInt,     // 网络发送中断
-    SoftwareInt         // 软件中断
-};
-```
-
-所有中断都存储在同一个`pending`队列中，按时间排序并统一处理，这提供了一个统一的中断管理系统。
-
-这个机制使得Nachos能够模拟真实操作系统中的中断驱动调度，实现线程的时间片轮转和抢占式调度。
-
-
-### Timer 系统的实现机制
-
-Timer系统是Nachos中实现时间片轮转调度的关键组件，它模拟了真实操作系统中的硬件定时器功能。
-
-#### 1. Timer类的设计与实现
-
-Timer类的主要功能是模拟硬件定时器，定期产生中断来实现线程的时间片轮转。
-
-**Timer类结构**：
-```cpp
-class Timer {
-private:
-    bool randomize;               // 是否使用随机时间间隔
-    VoidFunctionPtr handler;      // 中断处理函数指针
-    _int arg;                    // 传递给中断处理函数的参数
-    
-public:
-    Timer(VoidFunctionPtr timerHandler, _int callArg, bool doRandom);
-    ~Timer() {}
-    void TimerExpired();         // 定时器过期时调用
-    int TimeOfNextInterrupt();   // 计算下次中断时间
-};
-```
-
-**Timer构造函数**：
-```cpp
-Timer::Timer(VoidFunctionPtr timerHandler, _int callArg, bool doRandom)
-{
-    randomize = doRandom;
-    handler = timerHandler;  // 存储中断处理函数（如 TimerInterruptHandler）
-    arg = callArg;          // 存储参数
-
-    // 安排第一次定时器中断
-    interrupt->Schedule(TimerHandler, (_int) this, TimeOfNextInterrupt(), TimerInt); 
-}
-```
-
-这个构造函数的关键点：
-- 存储用户提供的中断处理函数和参数
-- 调用`interrupt->Schedule`安排第一次中断
-- `TimeOfNextInterrupt()`决定中断间隔（固定或随机）
-
-#### 2. 定时器中断的处理流程
-
-**TimerExpired方法**：
-```cpp
-void Timer::TimerExpired() 
-{
-    // 安排下一次定时器中断
-    interrupt->Schedule(TimerHandler, (_int) this, TimeOfNextInterrupt(), TimerInt);
-
-    // 调用实际的中断处理函数
-    (*handler)(arg);
-}
-```
-
-**TimeOfNextInterrupt方法**：
-```cpp
-int Timer::TimeOfNextInterrupt() 
-{
-    if (randomize)
-        return 1 + (Random() % (TimerTicks * 2));  // 随机间隔
-    else
-        return TimerTicks;  // 固定间隔（默认100个时钟周期）
-}
-```
-
-#### 3. TimerTicks常量
-
-在`stats.h`中定义：
-```cpp
-#define TimerTicks 	100    	// (平均) 定时器中断间隔时间
-```
-
-这意味着默认情况下，每100个时钟周期产生一次定时器中断，这对应于真实操作系统中的时间片概念。
-
-#### 4. 与中断系统的集成
-
-Timer系统与中断系统紧密集成：
-- Timer创建时调用`interrupt->Schedule`安排中断
-- 中断触发时调用`TimerExpired`方法
-- `TimerExpired`再次安排下一次中断并执行用户处理函数
-- 用户处理函数通常是`TimerInterruptHandler`，它设置线程切换标志
-
-#### 5. 定时器的工作流程
-
-```
-系统启动 → Timer对象创建 → 安排第一次中断 → 等待 → 中断触发 → TimerExpired() → 
-安排下次中断 → 执行处理函数 → 设置线程切换标志 → 线程切换
-```
-
-这样的设计使得Timer系统能够在不依赖真实硬件的情况下，提供类似真实操作系统定时器的功能，实现抢占式调度。
-
-
-### SystemTick 和时间推进机制
-
-SystemTick是Nachos中时间管理的核心概念，它定义了系统操作的时间单位。
-
-#### 1. SystemTick的定义
-
-在`stats.h`中：
-```cpp
-#define UserTick 	1	// 用户级指令执行时间：1个单位
-#define SystemTick 	10 	// 中断使能时推进时间：10个单位
-```
-
-**设计理念**：
-- `UserTick = 1`：模拟用户代码执行相对较快
-- `SystemTick = 10`：模拟系统调用/中断处理相对耗时更多
-
-#### 2. 时间推进的实现
-
-时间推进主要在`interrupt.cc`的`OneTick()`方法中实现：
-
-```cpp
-void Interrupt::OneTick()
-{
-    // 推进总时钟和系统时钟
-    stats->totalTicks += SystemTick;   // 总时间增加SystemTick（10）
-    stats->systemTicks += SystemTick;  // 系统时间增加SystemTick（10）
-    
-    // 检查是否有定时中断到达
-    CheckIfDue(true);
-}
-```
-
-#### 3. 时间推进的触发点
-
-时间推进不是自动的，而是在系统的关键操作中主动进行：
-
-**中断状态改变时**：
-```cpp
-IntStatus Interrupt::SetLevel(IntStatus level)
-{
-    // 当中断状态改变时，推进时间
-    if (level == IntOn) {
-        OneTick();  // 推进时钟
-    }
-}
-```
-
-**线程操作时**：
-```cpp
-void Thread::Yield()
-{
-    IntStatus oldLevel = interrupt->SetLevel(IntOff);  // 会推进时间
-    // ...
-    scheduler->Run(nextThread);  // 也会推进时间
-}
-```
-
-#### 4. 主动式时间管理
-
-与真实操作系统不同，Nachos的时间推进是主动的：
-- **真实系统**：硬件定时器自动产生中断
-- **Nachos**：通过在系统调用中插入时间推进代码来模拟
-
-这种设计是因为Nachos运行在用户空间，无法直接访问硬件定时器，必须通过软件方式模拟。
-
-#### 5. 避免无限循环问题
-
-如果一个线程在执行纯计算循环，不调用任何系统函数，时间将不会推进。因此：
-- 线程应定期调用系统函数（如同步原语）
-- 或主动调用`currentThread->Yield()`让出CPU
-- 这确保了定时器中断能够正常触发
-
-
-### 中断队列管理机制
-
-Nachos使用统一的中断队列管理所有类型的模拟硬件中断。
-
-#### 1. 统一的中断队列
-
-中断系统维护一个待处理中断的优先队列：
-
-**中断类型定义**：
-```cpp
-enum IntType {
-    TimerInt,           // 定时器中断
-    DiskInt,            // 磁盘中断  
-    ConsoleReadInt,     // 控制台读中断
-    ConsoleWriteInt,    // 控制台写中断
-    NetworkRecvInt,     // 网络接收中断
-    NetworkSendInt,     // 网络发送中断
-    SoftwareInt         // 软件中断
-};
-```
-
-#### 2. PendingInterrupt结构
-
-```cpp
-// 每个待处理中断的信息
-struct PendingInterrupt {
-    VoidFunctionPtr handler;  // 中断处理函数
-    _int arg;                 // 传递给处理函数的参数
-    int when;                 // 中断触发时间
-    IntType type;             // 中断类型
-};
-```
-
-#### 3. Schedule方法
-
-```cpp
-void Interrupt::Schedule(VoidFunctionPtr handler, _int arg, int when, IntType type)
-{
-    // 计算中断发生的时间点
-    int timeToInterrupt = stats->totalTicks + when;
-    
-    // 创建待处理中断对象
-    PendingInterrupt *toSchedule = new PendingInterrupt(handler, arg, timeToInterrupt, type);
-    
-    // 按时间排序插入队列
-    pending->SortedInsert(toSchedule, timeToInterrupt);
-}
-```
-
-#### 4. 统一的中断检查
-
-所有类型的中断都在同一个`CheckIfDue`方法中处理：
-
-```cpp
-void Interrupt::CheckIfDue(bool advanceClock)
-{
-    if (!pending->Empty()) {
-        PendingInterrupt *next = (PendingInterrupt*)pending->Front();
-        if (next->when <= stats->totalTicks) {  // 如果到了中断时间
-            // 执行对应的处理函数（不管是什么类型的中断）
-            (*next->handler)(next->arg);
-            // 从队列中移除
-            (void) pending->Remove();
-        }
-    }
-}
-```
-
-#### 5. 多设备协同工作
-
-这种设计使得：
-- **定时器**：`interrupt->Schedule(TimerHandler, ...)` 安排定时中断
-- **磁盘**：`interrupt->Schedule(DiskDone, ...)` 安排磁盘I/O完成中断
-- **控制台**：`interrupt->Schedule(ConsoleReadPoll, ...)` 安排控制台操作完成中断
-- **网络**：`interrupt->Schedule(NetworkSendDone, ...)` 安排网络操作完成中断
-
-都使用相同的中断队列和处理机制，形成统一的中断管理系统。
-
-#### 6. 时间排序的优势
-
-- **精确性**：不同设备的中断按实际时间顺序执行
-- **灵活性**：可以模拟复杂的时间依赖关系
-- **可扩展性**：容易添加新的设备中断类型
-
-这种统一的中断管理机制是Nachos能够模拟真实操作系统中断系统的关键，它统一处理定时器、I/O设备等各种中断，实现了完整的中断驱动系统。
