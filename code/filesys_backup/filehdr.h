@@ -54,20 +54,11 @@ class FileHeader {
     int FileLength();			// Return the length of the file 
 					// in bytes
 
-    void SetModifyTime();              // Set the modification time to current time
-    int GetModifyTime();               // Get the modification time
-
-    void UpdateFileLength(int newLength); // Update file length without allocating sectors
-    bool ExtendFileSize(BitMap *freeMap, int newSize); // Extend file and allocate sectors
-
-    int GetNumSectors();              // Get the number of sectors (calculated from file size)
-
     void Print();			// Print the contents of the file.
 
   private:
     int numBytes;			// Number of bytes in the file
-    int modifyTime;                    // This field stores modification time on disk, 
-                                       // but serves as numSectors for internal operations
+    int numSectors;			// Number of data sectors in the file
     int dataSectors[NumDirect];		// Disk sector numbers for each data 
 					// block in the file
 };

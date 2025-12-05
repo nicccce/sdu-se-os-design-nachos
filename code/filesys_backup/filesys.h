@@ -84,8 +84,6 @@ class FileSystem {
     void List();			// List all the files in the file system
 
     void Print();			// List all the files and their contents
-    
-    OpenFile* GetFreeMapFile() { return freeMapFile; }  // Get the free map file
 
   private:
    OpenFile* freeMapFile;		// Bit map of free disk blocks,

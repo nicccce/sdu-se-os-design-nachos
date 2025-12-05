@@ -23,9 +23,6 @@
 #include "copyright.h"
 #include "utility.h"
 
-// Forward declaration instead of include to avoid circular dependency
-class BitMap;
-
 #ifdef FILESYS_STUB			// Temporarily implement calls to 
 					// Nachos file system as calls to UNIX!
 					// See definitions listed under #else
@@ -83,21 +80,15 @@ class OpenFile {
     					// Read/write bytes from the file,
 					// bypassing the implicit position.
     int WriteAt(char *from, int numBytes, int position);
-    int WriteAtWithExpand(char *from, int numBytes, int position, BitMap *freeMap);
-    					// Write bytes and auto-expand file if needed
 
     int Length(); 			// Return the number of bytes in the
 					// file (this interface is simpler 
 					// than the UNIX idiom -- lseek to 
 					// end of file, tell, lseek back 
-    void WriteBack();                 // Write file header back to disk
-    int GetHdrSector() { return hdrSector; } // Return the sector of file header
-    bool ExtendFile(BitMap *freeMap); // Extend file to allocate sectors based on current size 
     
   private:
     FileHeader *hdr;			// Header for this file 
     int seekPosition;			// Current position within the file
-    int hdrSector;                     // Sector number of this file's header
 };
 
 #endif // FILESYS

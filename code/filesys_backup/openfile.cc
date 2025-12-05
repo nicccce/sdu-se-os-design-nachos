@@ -29,7 +29,6 @@ OpenFile::OpenFile(int sector)
     hdr = new FileHeader;
     hdr->FetchFrom(sector);
     seekPosition = 0;
-    hdrSector = sector;
 }
 
 //----------------------------------------------------------------------
@@ -80,8 +79,6 @@ OpenFile::Read(char *into, int numBytes)
 int
 OpenFile::Write(char *into, int numBytes)
 {
-   // For now, we use WriteAt to maintain compatibility with existing code
-   // To get auto-expansion functionality, use WriteAtWithExpand directly
    int result = WriteAt(into, numBytes, seekPosition);
    seekPosition += result;
    return result;
@@ -151,136 +148,11 @@ OpenFile::WriteAt(char *from, int numBytes, int position)
     bool firstAligned, lastAligned;
     char *buf;
 
-    if ((numBytes <= 0) || (position > fileLength))  // Allow writing at the end of file for extension
+    if ((numBytes <= 0) || (position >= fileLength))  // For original Nachos file system
+//    if ((numBytes <= 0) || (position > fileLength))  // For lab4 ...
 	return 0;				// check request
-    
-    // Check if we need to extend the file
-    if ((position + numBytes) > fileLength) {
-        // We need to extend the file, but since we don't have direct access to BitMap here,
-        // we can't properly allocate sectors. Instead, we'll update the header size temporarily
-        // and expect the calling code to handle sector allocation via WriteBack/ExtendFile
-        int newFileSize = position + numBytes;
-        hdr->UpdateFileLength(newFileSize);  // Update the size in memory
-        fileLength = newFileSize;  // Update local copy
-    }
-    DEBUG('f', "Writing %d bytes at %d, from file of length %d.\n", 	
-			numBytes, position, fileLength);
-
-    firstSector = divRoundDown(position, SectorSize);
-    lastSector = divRoundDown(position + numBytes - 1, SectorSize);
-    numSectors = 1 + lastSector - firstSector;
-
-    // Check if we have enough sectors allocated for this write operation
-    // If not, we may need to adjust our approach
-    if (lastSector >= hdr->GetNumSectors()) {
-        // This means we're trying to write to sectors that may not be allocated
-        // This is where we'd need the BitMap to properly allocate sectors
-        // For now, we'll return 0 to indicate failure if we don't have enough sectors
-        if ((position + numBytes) > fileLength) {
-            // This is a case where we're trying to extend but don't have sectors allocated
-            return 0; // Indicate failure
-        }
-    }
-
-    buf = new char[numSectors * SectorSize];
-
-    firstAligned = (bool)(position == (firstSector * SectorSize));
-    lastAligned = (bool)((position + numBytes) == ((lastSector + 1) * SectorSize));
-
-// read in first and last sector, if they are to be partially modified
-    if (!firstAligned)
-        ReadAt(buf, SectorSize, firstSector * SectorSize);	
-    if (!lastAligned && ((firstSector != lastSector) || firstAligned))
-        ReadAt(&buf[(lastSector - firstSector) * SectorSize], 
-				SectorSize, lastSector * SectorSize);	
-
-// copy in the bytes we want to change 
-    bcopy(from, &buf[position - (firstSector * SectorSize)], numBytes);
-
-// write modified sectors back
-    for (i = firstSector; i <= lastSector; i++) {
-        // Make sure this sector has been allocated
-        synchDisk->WriteSector(hdr->ByteToSector(i * SectorSize), 
-					&buf[(i - firstSector) * SectorSize]);
-    }
-    delete [] buf;
-    
-    // Update the modification time since content is being written
-    hdr->SetModifyTime();
-    // Write the updated file header back to disk to persist the modification time
-    hdr->WriteBack(hdrSector);
-    
-    return numBytes;
-}
-
-//----------------------------------------------------------------------
-// OpenFile::Length
-// 	Return the number of bytes in the file.
-//----------------------------------------------------------------------
-
-int
-OpenFile::Length() 
-{ 
-    return hdr->FileLength(); 
-}
-
-//----------------------------------------------------------------------
-// OpenFile::WriteBack
-// 	Write the modified file header back to disk.
-//----------------------------------------------------------------------
-
-void
-OpenFile::WriteBack()
-{
-    // Write the file header back to disk
-    hdr->WriteBack(hdrSector);
-}
-
-//----------------------------------------------------------------------
-// OpenFile::ExtendFile
-// 	Extend the file to allocate sectors based on current file size.
-//----------------------------------------------------------------------
-
-bool
-OpenFile::ExtendFile(BitMap *freeMap)
-{
-    // Extend the file header to ensure enough sectors are allocated for the current file size
-    return hdr->ExtendFileSize(freeMap, hdr->FileLength());
-}
-
-//----------------------------------------------------------------------
-// OpenFile::WriteAtWithExpand
-// 	Write the content and auto-expand the file if needed.
-//  This version can allocate new sectors when extending the file.
-//  After extension, the updated file header is written back to disk.
-//----------------------------------------------------------------------
-
-int
-OpenFile::WriteAtWithExpand(char *from, int numBytes, int position, BitMap *freeMap)
-{
-    int fileLength = hdr->FileLength();
-    int i, firstSector, lastSector, numSectors;
-    bool firstAligned, lastAligned;
-    char *buf;
-
-    if ((numBytes <= 0) || (position > fileLength))  // Allow writing at the end of file for extension
-	return 0;				// check request
-    
-    bool wasExtended = false;
-    // For dynamic file extension, we need to handle cases where position + numBytes > fileLength
-    if ((position + numBytes) > fileLength) {
-        // Update file header to reflect new size temporarily (in memory only)
-        int newFileSize = position + numBytes;
-        
-        // Try to extend the file and allocate actual sectors
-        if (!hdr->ExtendFileSize(freeMap, newFileSize)) {
-            // If we can't allocate sectors, return 0 to indicate failure
-            return 0;
-        }
-        // Update the local file length after extension
-        fileLength = newFileSize;
-        wasExtended = true;  // Mark that we extended the file
-    }
+    if ((position + numBytes) > fileLength)
+	numBytes = fileLength - position;
     DEBUG('f', "Writing %d bytes at %d, from file of length %d.\n", 	
 			numBytes, position, fileLength);
 
@@ -308,11 +180,16 @@ OpenFile::WriteAtWithExpand(char *from, int numBytes, int position, BitMap *free
         synchDisk->WriteSector(hdr->ByteToSector(i * SectorSize), 
 					&buf[(i - firstSector) * SectorSize]);
     delete [] buf;
-    
-    // Update modification time whenever content is written (whether extended or not)
-    hdr->SetModifyTime();
-    // Write the updated file header back to disk to persist the modification time
-    hdr->WriteBack(hdrSector);
-    
     return numBytes;
+}
+
+//----------------------------------------------------------------------
+// OpenFile::Length
+// 	Return the number of bytes in the file.
+//----------------------------------------------------------------------
+
+int
+OpenFile::Length() 
+{ 
+    return hdr->FileLength(); 
 }

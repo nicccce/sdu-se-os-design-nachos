@@ -26,7 +26,6 @@
 
 #include "system.h"
 #include "filehdr.h"
-#include <sys/time.h>  // For time functions
 
 //----------------------------------------------------------------------
 // FileHeader::Allocate
@@ -43,11 +42,11 @@ bool
 FileHeader::Allocate(BitMap *freeMap, int fileSize)
 { 
     numBytes = fileSize;
-    SetModifyTime();  // Set modification time to current time
-    if (freeMap->NumClear() < GetNumSectors())
+    numSectors  = divRoundUp(fileSize, SectorSize);
+    if (freeMap->NumClear() < numSectors)
 	return FALSE;		// not enough space
 
-    for (int i = 0; i < GetNumSectors(); i++)
+    for (int i = 0; i < numSectors; i++)
 	dataSectors[i] = freeMap->Find();
     return TRUE;
 }
@@ -62,7 +61,7 @@ FileHeader::Allocate(BitMap *freeMap, int fileSize)
 void 
 FileHeader::Deallocate(BitMap *freeMap)
 {
-    for (int i = 0; i < GetNumSectors(); i++) {
+    for (int i = 0; i < numSectors; i++) {
 	ASSERT(freeMap->Test((int) dataSectors[i]));  // ought to be marked!
 	freeMap->Clear((int) dataSectors[i]);
     }
@@ -122,102 +121,6 @@ FileHeader::FileLength()
 }
 
 //----------------------------------------------------------------------
-// FileHeader::SetModifyTime
-// 	Set the modification time to the current time.
-//----------------------------------------------------------------------
-
-void
-FileHeader::SetModifyTime()
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);  // Get current time
-    modifyTime = tv.tv_sec;  // Store seconds since Unix epoch
-}
-
-//----------------------------------------------------------------------
-// FileHeader::GetModifyTime
-// 	Get the modification time of the file.
-//----------------------------------------------------------------------
-
-int
-FileHeader::GetModifyTime()
-{
-    return modifyTime;
-}
-
-//----------------------------------------------------------------------
-
-//----------------------------------------------------------------------
-// FileHeader::GetNumSectors
-// 	Get the number of sectors.
-//----------------------------------------------------------------------
-
-int
-FileHeader::GetNumSectors()
-{
-    // Calculate number of sectors from file size, not from modifyTime
-    return divRoundUp(numBytes, SectorSize);
-}
-
-//----------------------------------------------------------------------
-// FileHeader::UpdateFileLength
-// 	Just update the file length without allocating new sectors.
-//  Used for temporary updates or when sectors are already allocated.
-//
-//	"newLength" is the new length of the file in bytes
-//----------------------------------------------------------------------
-
-void
-FileHeader::UpdateFileLength(int newLength)
-{
-    numBytes = newLength;
-}
-
-//----------------------------------------------------------------------
-// FileHeader::ExtendFileSize
-// 	Extend the size of the file to accommodate new data and allocate sectors.
-//	Return TRUE if the extension is successful, FALSE otherwise.
-//
-//	"freeMap" is the bit map of free disk sectors
-//	"newSize" is the new size of the file in bytes
-//----------------------------------------------------------------------
-
-bool
-FileHeader::ExtendFileSize(BitMap *freeMap, int newSize)
-{
-    if (newSize <= numBytes) {
-        return TRUE;  // No extension needed
-    }
-
-    int newNumSectors = divRoundUp(newSize, SectorSize);
-    int sectorsNeeded = newNumSectors - GetNumSectors();
-
-    if (sectorsNeeded > 0) {
-        // Check if we have enough free sectors
-        if (sectorsNeeded > NumDirect - GetNumSectors()) {
-            return FALSE;  // Cannot extend beyond maximum file size
-        }
-
-        // Allocate new sectors
-        for (int i = GetNumSectors(); i < GetNumSectors() + sectorsNeeded; i++) {
-            dataSectors[i] = freeMap->Find();
-            if (dataSectors[i] == -1) {
-                // Not enough free sectors, deallocate the ones we just allocated
-                for (int j = GetNumSectors(); j < i; j++) {
-                    freeMap->Clear(dataSectors[j]);
-                    dataSectors[j] = 0;
-                }
-                return FALSE;
-            }
-        }
-    }
-
-    numBytes = newSize;
-    SetModifyTime();  // Update modification time when file is extended
-    return TRUE;
-}
-
-//----------------------------------------------------------------------
 // FileHeader::Print
 // 	Print the contents of the file header, and the contents of all
 //	the data blocks pointed to by the file header.
@@ -230,11 +133,10 @@ FileHeader::Print()
     char *data = new char[SectorSize];
 
     printf("FileHeader contents.  File size: %d.  File blocks:\n", numBytes);
-    for (i = 0; i < GetNumSectors(); i++)
+    for (i = 0; i < numSectors; i++)
 	printf("%d ", dataSectors[i]);
-    printf("\nLast modified: %d (seconds since UTC Jan 1, 1970)\n", modifyTime);
-    printf("File contents:\n");
-    for (i = k = 0; i < GetNumSectors(); i++) {
+    printf("\nFile contents:\n");
+    for (i = k = 0; i < numSectors; i++) {
 	synchDisk->ReadSector(dataSectors[i], data);
         for (j = 0; (j < SectorSize) && (k < numBytes); j++, k++) {
 	    if ('\040' <= data[j] && data[j] <= '\176')   // isprint(data[j])

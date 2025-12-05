@@ -178,7 +178,6 @@ Directory::List()
 // Directory::Print
 // 	List all the file names in the directory, their FileHeader locations,
 //	and the contents of each file.  For debugging.
-//  Also display the last modification time of each file.
 //----------------------------------------------------------------------
 
 void
@@ -191,9 +190,6 @@ Directory::Print()
 	if (table[i].inUse) {
 	    printf("Name: %s, Sector: %d\n", table[i].name, table[i].sector);
 	    hdr->FetchFrom(table[i].sector);
-	    // Only display modification time for regular files (not directory or other special files)
-	    // We'll assume regular files based on context (e.g. not special system files)
-	    printf("Last modified: %d (seconds since UTC Jan 1, 1970)\n", hdr->GetModifyTime());
 	    hdr->Print();
 	}
     printf("\n");

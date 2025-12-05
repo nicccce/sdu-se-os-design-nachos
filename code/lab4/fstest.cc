@@ -19,6 +19,8 @@
 #include "system.h"
 #include "thread.h"
 #include "disk.h"
+#include "bitmap.h"
+#include "disk.h"
 #include "stats.h"
 
 #include "directory.h"
@@ -131,23 +133,44 @@ Append(char *from, char *to, int half)
     if (half) start = start / 2;
     openFile->Seek(start);
     
-// Append the data in TransferSize chunks
+    // Get the file system to access the free map for dynamic expansion
+    extern FileSystem *fileSystem;
+    BitMap *freeMap = NULL;
+    OpenFile *freeMapOpenFile = NULL;
+    
+    if (fileSystem != NULL) {
+        freeMapOpenFile = fileSystem->GetFreeMapFile();
+        if (freeMapOpenFile != NULL) {
+            freeMap = new BitMap(NumSectors);
+            freeMap->FetchFrom(freeMapOpenFile);
+        }
+    }
+
+// Append the data in TransferSize chunks using WriteAtWithExpand for auto-expansion
     buffer = new char[TransferSize];
     while ((amountRead = fread(buffer, sizeof(char), TransferSize, fp)) > 0) 
     {
         int result;
-//	printf("start value: %d,  amountRead %d, ", start, amountRead);
-//	result = openFile->WriteAt(buffer, amountRead, start);
-	result = openFile->Write(buffer, amountRead);
-//	printf("result of write: %d\n", result);
-	ASSERT(result == amountRead);
-//	start += amountRead;
-//	ASSERT(start == openFile->Length());
+        // Use WriteAtWithExpand to allow auto-expansion within the write operation
+        if (freeMap != NULL) {
+            // Write to the current end of file
+            result = openFile->WriteAtWithExpand(buffer, amountRead, openFile->Length(), freeMap);
+        } else {
+            // Fallback to original Write method if BitMap unavailable
+            result = openFile->Write(buffer, amountRead);
+        }
+        ASSERT(result == amountRead);
     }
     delete [] buffer;
 
+    // Update the free map if we used it
+    if (freeMap != NULL && freeMapOpenFile != NULL) {
+        freeMap->WriteBack(freeMapOpenFile);
+        delete freeMap;
+    }
+
 //  Write the inode back to the disk, because we have changed it
-//  openFile->WriteBack();
+    openFile->WriteBack();
 //  printf("inodes have been written back\n");
     
 // Close the UNIX and the Nachos files
@@ -215,24 +238,45 @@ NAppend(char *from, char *to)
     start = openFileTo->Length();
     openFileTo->Seek(start);
     
-// Append the data in TransferSize chunks
+    // Get the file system to access the free map for dynamic expansion
+    extern FileSystem *fileSystem;
+    BitMap *freeMap = NULL;
+    OpenFile *freeMapOpenFile = NULL;
+    
+    if (fileSystem != NULL) {
+        freeMapOpenFile = fileSystem->GetFreeMapFile();
+        if (freeMapOpenFile != NULL) {
+            freeMap = new BitMap(NumSectors);
+            freeMap->FetchFrom(freeMapOpenFile);
+        }
+    }
+    
+// Append the data in TransferSize chunks using WriteAtWithExpand for auto-expansion
     buffer = new char[TransferSize];
     openFileFrom->Seek(0);
     while ( (amountRead = openFileFrom->Read(buffer, TransferSize)) > 0) 
     {
         int result;
-//	printf("start value: %d,  amountRead %d, ", start, amountRead);
-//	result = openFile->WriteAt(buffer, amountRead, start);
-	result = openFileTo->Write(buffer, amountRead);
-//	printf("result of write: %d\n", result);
-	ASSERT(result == amountRead);
-//	start += amountRead;
-//	ASSERT(start == openFile->Length());
+        // Use WriteAtWithExpand to allow auto-expansion within the write operation
+        if (freeMap != NULL) {
+            // Write to the current end of file
+            result = openFileTo->WriteAtWithExpand(buffer, amountRead, openFileTo->Length(), freeMap);
+        } else {
+            // Fallback to original Write method if BitMap unavailable
+            result = openFileTo->Write(buffer, amountRead);
+        }
+        ASSERT(result == amountRead);
     }
     delete [] buffer;
 
+    // Update the free map if we used it
+    if (freeMap != NULL && freeMapOpenFile != NULL) {
+        freeMap->WriteBack(freeMapOpenFile);
+        delete freeMap;
+    }
+
 //  Write the inode back to the disk, because we have changed it
-//  openFileTo->WriteBack();
+    openFileTo->WriteBack();
 //  printf("inodes have been written back\n");
     
 // Close both Nachos files
@@ -304,8 +348,30 @@ FileWrite()
 	printf("Perf test: unable to open %s\n", FileName);
 	return;
     }
+    
+    // Get the file system to access the free map for dynamic expansion
+    extern FileSystem *fileSystem;
+    BitMap *freeMap = NULL;
+    OpenFile *freeMapOpenFile = NULL;
+    
+    if (fileSystem != NULL) {
+        freeMapOpenFile = fileSystem->GetFreeMapFile();
+        if (freeMapOpenFile != NULL) {
+            freeMap = new BitMap(NumSectors);
+            freeMap->FetchFrom(freeMapOpenFile);
+        }
+    }
+    
     for (i = 0; i < FileSize; i += ContentSize) {
-        numBytes = openFile->Write(Contents, ContentSize);
+        int numBytes;
+        if (freeMap != NULL) {
+            // Use WriteAtWithExpand to allow auto-expansion
+            numBytes = openFile->WriteAtWithExpand((char*)Contents, ContentSize, i, freeMap);
+        } else {
+            // Fallback to original Write method if BitMap unavailable
+            openFile->Seek(i);  // Position to the write location
+            numBytes = openFile->Write((char*)Contents, ContentSize);
+        }
 	if (numBytes < 10) {
 	    printf("Perf test: unable to write %s\n", FileName);
 	    delete openFile;
@@ -313,8 +379,14 @@ FileWrite()
 	}
     }
 
+    // Update the free map if we used it
+    if (freeMap != NULL && freeMapOpenFile != NULL) {
+        freeMap->WriteBack(freeMapOpenFile);
+        delete freeMap;
+    }
+
 //  Write the inode back to the disk, because we have changed it
-//  openFile->WriteBack();
+    openFile->WriteBack();
 //  printf("inodes have been written back\n");
     
     delete openFile;	// close file
