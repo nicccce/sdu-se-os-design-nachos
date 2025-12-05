@@ -1,36 +1,30 @@
 // filesys.h 
-//	表示Nachos文件系统的数据结构。
+//	表示 Nachos 文件系统的数据结构。
 //
-//	文件系统是一组存储在磁盘上的文件，组织
-//	成目录。文件系统的操作必须
-//	处理"命名" -- 创建、打开和删除文件，
-//	给定一个文本文件名。对单个
-//	"打开"文件的操作（读取、写入、关闭）可以在OpenFile
-//	类（openfile.h）中找到。
+//	文件系统是存储在磁盘上的一组文件，组织成目录。
+//	文件系统的操作与"命名"有关 -- 创建、打开和删除文件，
+//	给定文本文件名。对单个"打开"文件的操作（读、写、关闭）
+//	可以在 OpenFile 类（openfile.h）中找到。
 //
-//	我们定义了文件系统的两个独立实现。
-//	"STUB"版本只是重新定义了Nachos文件系统
-//	操作为运行Nachos模拟的机器上的
-//	本机UNIX文件系统操作。这是在
-//	多程序和虚拟内存作业（使用
-//	文件系统）在文件系统作业之前完成的情况下提供的。
+//	我们定义了文件系统的两个单独实现。
+//	"STUB" 版本只是将 Nachos 文件系统操作重新定义为
+//	运行 Nachos 模拟的机器上的本机 UNIX 文件系统上的操作。
+//	提供这是为了以防多程序和虚拟内存作业（使用文件系统）
+//	在文件系统作业之前完成。
 //
-//	另一个版本是"真实"的文件系统，建立在
-//	磁盘模拟器之上。磁盘使用本机UNIX
-//	文件系统模拟（在一个名为"DISK"的文件中）。
+//	另一个版本是"真实"文件系统，建立在磁盘模拟器之上。
+//	磁盘使用本机 UNIX 文件系统模拟（在名为 "DISK" 的文件中）。
 //
-//	在"真实"实现中，文件系统中使用了两个关键数据结构。
-//	有一个单独的"根"目录，列出
-//	文件系统中的所有文件；与UNIX不同，
-//	基线系统不提供分层目录结构。
-//	此外，还有一个用于分配
-//	磁盘扇区的位图。根目录和位图本身
-//	都作为文件存储在Nachos文件系统中 -- 这在初始化模拟磁盘时
-//	引起了一个有趣的引导问题。
+//	在"真实"实现中，文件系统中使用两个关键数据结构。
+//	有一个单独的"根"目录，列出文件系统中的所有文件；
+//	与 UNIX 不同，基线系统不提供分层目录结构。
+//	此外，有一个用于分配磁盘扇区的位图。
+//	根目录和位图本身都作为文件存储在 Nachos 文件系统中 --
+//	这导致在初始化模拟磁盘时出现一个有趣的引导问题。
 //
-// 版权所有 (c) 1992-1993 加州大学董事会。
-// 保留所有权利。请参阅 copyright.h 以获得版权公告和责任限制 
-// 以及保修声明条款。
+// Copyright (c) 1992-1993 The Regents of the University of California.
+// All rights reserved.  See copyright.h for copyright notice and limitation 
+// of liability and disclaimer of warranty provisions.
 
 #ifndef FS_H
 #define FS_H
@@ -38,13 +32,15 @@
 #include "copyright.h"
 #include "openfile.h"
 
-#ifdef FILESYS_STUB 		// 临时将文件系统调用实现为
-				// 对UNIX的调用，直到真实文件系统
-				// 实现可用
+// STUB版本：临时实现，直接使用宿主机的UNIX文件系统
+// 用于在完成文件系统作业之前进行多程序和虚拟内存作业
+#ifdef FILESYS_STUB 		
 class FileSystem {
   public:
+    // 构造函数：初始化文件系统
     FileSystem(bool format) {}
 
+    // 创建文件：使用宿主机系统调用
     bool Create(char *name, int initialSize) { 
 	int fileDescriptor = OpenForWrite(name);
 
@@ -53,6 +49,7 @@ class FileSystem {
 	return TRUE; 
 	}
 
+    // 打开文件：使用宿主机系统调用
     OpenFile* Open(char *name) {
 	  int fileDescriptor = OpenForReadWrite(name, FALSE);
 
@@ -60,36 +57,64 @@ class FileSystem {
 	  return new OpenFile(fileDescriptor);
       }
 
+    // 删除文件：使用宿主机系统调用
     bool Remove(char *name) { return (bool)(Unlink(name) == 0); }
 
 };
 
 #else // FILESYS
+
+// 真实文件系统实现：基于磁盘模拟器的完整文件系统
+// 这是Nachos文件系统的完整实现版本
 class FileSystem {
   public:
-    FileSystem(bool format);		// 初始化文件系统。
-					// 必须在"synchDisk"
-					// 初始化*之后*调用。
-    					// 如果"format"，磁盘上没有
-					// 任何内容，所以初始化目录
-    					// 和空闲块位图。
+    // 构造函数：初始化文件系统
+    // 参数：format - 是否格式化磁盘(TRUE=清空磁盘并创建新的文件系统结构，FALSE=加载现有文件系统)
+    // 注意：必须在synchDisk初始化之后调用
+    // 如果format为TRUE，会初始化磁盘以包含空目录和空闲块位图
+    FileSystem(bool format);		
 
+    // 创建新文件
+    // 参数：name - 文件名，initialSize - 文件初始大小(字节)
+    // 注意：文件大小在创建后固定不变
+    // 返回值：成功返回TRUE，失败返回FALSE
     bool Create(char *name, int initialSize);  	
-					// 创建一个文件（UNIX creat）
+    				
 
-    OpenFile* Open(char *name); 	// 打开一个文件（UNIX open）
+    // 打开已存在的文件
+    // 参数：name - 要打开的文件名
+    // 返回值：成功返回OpenFile对象指针，失败返回NULL
+    OpenFile* Open(char *name); 	
 
-    bool Remove(char *name);  		// 删除一个文件（UNIX unlink）
+    // 删除文件
+    // 参数：name - 要删除的文件名
+    // 操作：从目录中移除条目，释放文件头和数据块空间
+    // 返回值：成功返回TRUE，失败返回FALSE
+    bool Remove(char *name);  		
 
-    void List();			// 列出文件系统中的所有文件
+    // 列出目录中的所有文件名
+    // 输出：每个文件名占一行
+    void List();			
 
-    void Print();			// 列出所有文件及其内容
+    // 打印文件系统的完整信息(调试用)
+    // 输出：位图、目录、每个文件的文件头和内容
+    void Print();			
 
   private:
-   OpenFile* freeMapFile;		// 空闲磁盘块的位图，
-					// 表示为一个文件
-   OpenFile* directoryFile;		// "根"目录 -- 文件名列表，
-					// 表示为一个文件
+   OpenFile* freeMapFile;		// 空闲磁盘块位图文件的句柄
+					// 存储扇区使用状态信息
+   OpenFile* directoryFile;		// 根目录文件的句柄
+					// 存储文件名到文件头扇区号的映射
+   				
+   // 文件系统磁盘布局：
+   // 扇区0：位图文件头
+   // 扇区1：目录文件头
+   // 其他扇区：文件数据和文件头
+   // 
+   // 文件系统操作流程：
+   // 1. 创建：检查文件名存在 -> 分配文件头扇区 -> 分配数据空间 -> 添加目录条目 -> 写回磁盘
+   // 2. 打开：查找目录 -> 获取文件头扇区 -> 创建OpenFile对象
+   // 3. 删除：查找目录 -> 释放数据块 -> 释放文件头扇区 -> 移除目录条目 -> 写回磁盘
 };
 
 #endif // FILESYS
