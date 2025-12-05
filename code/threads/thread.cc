@@ -38,6 +38,42 @@ Thread::Thread(const char* threadName)
     stackTop = NULL;
     stack = NULL;
     status = JUST_CREATED;
+    parent = currentThread; // 设置父线程为当前线程
+#ifdef USER_PROGRAM
+    space = NULL;
+#endif
+    // 优先级继承：新线程继承当前线程的优先级
+    if (currentThread != NULL) {
+        priority = currentThread->getPriority();
+    } else {
+        priority = 0; // 默认优先级
+    }
+} 
+
+//----------------------------------------------------------------------
+// Thread::Thread
+// 	Initialize a thread control block with a specific priority, so that we can then call
+//	Thread::Fork.
+//
+//	"threadName" is an arbitrary string, useful for debugging.
+//	"threadPriority" is the priority for the thread (lower number means higher priority)
+//----------------------------------------------------------------------
+
+Thread::Thread(const char* threadName, int threadPriority)
+{
+    name = (char*)threadName;
+    stackTop = NULL;
+    stack = NULL;
+    status = JUST_CREATED;
+    parent = currentThread; // 设置父线程为当前线程
+    // 限制优先级在0-99范围内
+    if (threadPriority < 0) {
+        priority = 0;
+    } else if (threadPriority > 99) {
+        priority = 99;
+    } else {
+        priority = threadPriority;
+    }
 #ifdef USER_PROGRAM
     space = NULL;
 #endif
@@ -358,6 +394,24 @@ Thread::StackAllocate (VoidFunctionPtr func, _int arg)
     machineState[InitialPCState] = (_int) func;
     machineState[InitialArgState] = arg;
     machineState[WhenDonePCState] = (_int) ThreadFinish;
+}
+
+//----------------------------------------------------------------------
+// Thread::setPriority
+//	Set the thread's priority with range checking.
+//	Priority must be between 0 and 99 (lower number means higher priority).
+//----------------------------------------------------------------------
+
+void
+Thread::setPriority(int newPriority)
+{
+    if (newPriority < 0) {
+        priority = 0;
+    } else if (newPriority > 99) {
+        priority = 99;
+    } else {
+        priority = newPriority;
+    }
 }
 
 #ifdef USER_PROGRAM

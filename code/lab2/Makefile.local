@@ -18,8 +18,8 @@ CCFILES = main.cc\
 	system.cc\
 	thread.cc\
 	utility.cc\
-	threadtest.cc\
 	synchtest.cc\
+	schedtest.cc\
 	interrupt.cc\
 	sysdep.cc\
 	stats.cc\

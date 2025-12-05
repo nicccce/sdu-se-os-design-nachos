@@ -29,9 +29,7 @@
 
 Scheduler::Scheduler()
 { 
-    for (int i = 0; i < NUM_PRIORITY_LEVELS; i++) {
-        readyList[i] = new List;
-    }
+    readyList = new List; 
 } 
 
 //----------------------------------------------------------------------
@@ -41,9 +39,7 @@ Scheduler::Scheduler()
 
 Scheduler::~Scheduler()
 { 
-    for (int i = 0; i < NUM_PRIORITY_LEVELS; i++) {
-        delete readyList[i];
-    }
+    delete readyList; 
 } 
 
 //----------------------------------------------------------------------
@@ -57,13 +53,10 @@ Scheduler::~Scheduler()
 void
 Scheduler::ReadyToRun (Thread *thread)
 {
-    DEBUG('t', "Putting thread %s on ready list with priority %d.\n", 
-          thread->getName(), thread->getPriority());
+    DEBUG('t', "Putting thread %s on ready list.\n", thread->getName());
 
     thread->setStatus(READY);
-    // Insert thread into the appropriate priority queue
-    int priority = thread->getPriority();
-    readyList[priority]->Append((void *)thread);
+    readyList->Append((void *)thread);
 }
 
 //----------------------------------------------------------------------
@@ -77,16 +70,7 @@ Scheduler::ReadyToRun (Thread *thread)
 Thread *
 Scheduler::FindNextToRun ()
 {
-    // Find the highest priority queue that has threads
-    for (int i = 0; i < NUM_PRIORITY_LEVELS; i++) {
-        if (!readyList[i]->IsEmpty()) {
-            Thread *nextThread = (Thread *)readyList[i]->Remove();
-            DEBUG('t', "Found thread %s with priority %d to run.\n", 
-                  nextThread->getName(), i);
-            return nextThread;
-        }
-    }
-    return NULL;  // No threads ready
+    return (Thread *)readyList->Remove();
 }
 
 //----------------------------------------------------------------------
@@ -150,7 +134,7 @@ Scheduler::Run (Thread *nextThread)
 #endif
 }
 
-////----------------------------------------------------------------------
+//----------------------------------------------------------------------
 // Scheduler::Print
 // 	Print the scheduler state -- in other words, the contents of
 //	the ready list.  For debugging.
@@ -158,12 +142,6 @@ Scheduler::Run (Thread *nextThread)
 void
 Scheduler::Print()
 {
-    printf("Ready list contents by priority:\n");
-    for (int i = 0; i < NUM_PRIORITY_LEVELS; i++) {
-        if (!readyList[i]->IsEmpty()) {
-            printf("Priority %d: ", i);
-            readyList[i]->Mapcar((VoidFunctionPtr) ThreadPrint);
-            printf("\n");
-        }
-    }
+    printf("Ready list contents:\n");
+    readyList->Mapcar((VoidFunctionPtr) ThreadPrint);
 }

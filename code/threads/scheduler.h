@@ -17,6 +17,9 @@
 // the data structures and operations needed to keep track of which 
 // thread is running, and which threads are ready but not running.
 
+// Number of priority levels for multi-level queue
+#define NUM_PRIORITY_LEVELS 100
+
 class Scheduler {
   public:
     Scheduler();			// Initialize list of ready threads 
@@ -29,8 +32,8 @@ class Scheduler {
     void Print();			// Print contents of ready list
     
   private:
-    List *readyList;  		// queue of threads that are ready to run,
-				// but not running
+    List *readyList[NUM_PRIORITY_LEVELS];  // array of lists for each priority level
+						// priority 0 (highest) to 99 (lowest)
 };
 
 #endif // SCHEDULER_H
