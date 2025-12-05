@@ -10,6 +10,7 @@ CCFILES +=bitmap.cc\
 	filehdr.cc\
 	filesys.cc\
 	fstest.cc\
+	main.cc\
 	openfile.cc\
 	synchdisk.cc\
 	disk.cc
@@ -17,7 +18,7 @@ CCFILES +=bitmap.cc\
 ifdef MAKEFILE_USERPROG_LOCAL
 DEFINES := $(DEFINES:FILESYS_STUB=FILESYS)
 else
-INCPATH = -I- -I../lab5 -I../threads -I../machine -I../userprog -I../filesys
+INCPATH = -I../lab5 -I../threads -I../machine -I../userprog -I../filesys
 DEFINES += -DFILESYS_NEEDED -DFILESYS
 endif
 
