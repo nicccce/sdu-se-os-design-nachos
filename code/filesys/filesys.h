@@ -85,6 +85,8 @@ class FileSystem {
 
     void Print();			// List all the files and their contents
     
+    void PrintDiskInfo();		// Print disk usage information
+    
     OpenFile* GetFreeMapFile() { return freeMapFile; }  // Get the free map file
 
   private:

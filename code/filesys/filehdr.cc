@@ -27,6 +27,25 @@
 #include "system.h"
 #include "filehdr.h"
 #include <sys/time.h>  // For time functions
+#include <time.h>      // For time formatting functions
+
+//----------------------------------------------------------------------
+// FileHeader::PrintTime
+// 	Print the modification time in a human-readable format.
+//
+//	"time" is the time in seconds since Unix epoch
+//----------------------------------------------------------------------
+
+void
+FileHeader::PrintTime(int time)
+{
+    time_t rawtime = time;
+    struct tm *timeinfo = localtime(&rawtime);
+    char buffer[80];
+    
+    strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", timeinfo);
+    printf("%s", buffer);
+}
 
 //----------------------------------------------------------------------
 // FileHeader::Allocate
@@ -44,11 +63,42 @@ FileHeader::Allocate(BitMap *freeMap, int fileSize)
 { 
     numBytes = fileSize;
     SetModifyTime();  // Set modification time to current time
-    if (freeMap->NumClear() < GetNumSectors())
+    int numSectors = GetNumSectors();
+    
+    if (numSectors > (NumDirect + NumIndirect))
+	return FALSE;		// file too large
+
+    if (freeMap->NumClear() < numSectors)
 	return FALSE;		// not enough space
 
-    for (int i = 0; i < GetNumSectors(); i++)
-	dataSectors[i] = freeMap->Find();
+    // Initialize dataSectors array
+    memset(dataSectors, 0, sizeof(dataSectors));
+    
+    if (numSectors <= NumDirect) {
+	// Only need direct blocks
+	for (int i = 0; i < numSectors; i++)
+	    dataSectors[i] = freeMap->Find();
+	dataSectors[NumDirect] = -1;  // No indirect block
+    } else {
+	// Need both direct and indirect blocks
+	int indirectSectors[NumIndirect];
+	
+	// Allocate direct blocks
+	for (int i = 0; i < NumDirect; i++)
+	    dataSectors[i] = freeMap->Find();
+	
+	// Allocate indirect block
+	int indirectSector = freeMap->Find();
+	dataSectors[NumDirect] = indirectSector;
+	
+	// Allocate sectors pointed to by indirect block
+	int numIndirect = numSectors - NumDirect;
+	for (int i = 0; i < numIndirect; i++)
+	    indirectSectors[i] = freeMap->Find();
+	
+	// Write indirect block to disk
+	synchDisk->WriteSector(indirectSector, (char *)indirectSectors);
+    }
     return TRUE;
 }
 
@@ -62,9 +112,34 @@ FileHeader::Allocate(BitMap *freeMap, int fileSize)
 void 
 FileHeader::Deallocate(BitMap *freeMap)
 {
-    for (int i = 0; i < GetNumSectors(); i++) {
-	ASSERT(freeMap->Test((int) dataSectors[i]));  // ought to be marked!
-	freeMap->Clear((int) dataSectors[i]);
+    int numSectors = GetNumSectors();
+    
+    if (numSectors <= NumDirect) {
+	// Only direct blocks to deallocate
+	for (int i = 0; i < numSectors; i++) {
+	    ASSERT(freeMap->Test((int) dataSectors[i]));  // ought to be marked!
+	    freeMap->Clear((int) dataSectors[i]);
+	}
+    } else {
+	// Deallocate direct blocks
+	for (int i = 0; i < NumDirect; i++) {
+	    ASSERT(freeMap->Test((int) dataSectors[i]));  // ought to be marked!
+	    freeMap->Clear((int) dataSectors[i]);
+	}
+	
+	// Deallocate indirect block and its sectors
+	int indirectSectors[NumIndirect];
+	synchDisk->ReadSector(dataSectors[NumDirect], (char *)indirectSectors);
+	
+	int numIndirect = numSectors - NumDirect;
+	for (int i = 0; i < numIndirect; i++) {
+	    ASSERT(freeMap->Test((int) indirectSectors[i]));  // ought to be marked!
+	    freeMap->Clear((int) indirectSectors[i]);
+	}
+	
+	// Clear the indirect block itself
+	ASSERT(freeMap->Test((int) dataSectors[NumDirect]));  // ought to be marked!
+	freeMap->Clear((int) dataSectors[NumDirect]);
     }
 }
 
@@ -107,7 +182,17 @@ FileHeader::WriteBack(int sector)
 int
 FileHeader::ByteToSector(int offset)
 {
-    return(dataSectors[offset / SectorSize]);
+    int sectorNum = offset / SectorSize;
+    
+    if (sectorNum < NumDirect) {
+	// Direct block
+	return dataSectors[sectorNum];
+    } else {
+	// Indirect block
+	int indirectSectors[NumIndirect];
+	synchDisk->ReadSector(dataSectors[NumDirect], (char *)indirectSectors);
+	return indirectSectors[sectorNum - NumDirect];
+    }
 }
 
 //----------------------------------------------------------------------
@@ -189,26 +274,97 @@ FileHeader::ExtendFileSize(BitMap *freeMap, int newSize)
         return TRUE;  // No extension needed
     }
 
+    int oldNumSectors = GetNumSectors();
     int newNumSectors = divRoundUp(newSize, SectorSize);
-    int sectorsNeeded = newNumSectors - GetNumSectors();
+    int sectorsNeeded = newNumSectors - oldNumSectors;
+
+    if (newNumSectors > (NumDirect + NumIndirect)) {
+        return FALSE;  // Cannot extend beyond maximum file size
+    }
 
     if (sectorsNeeded > 0) {
-        // Check if we have enough free sectors
-        if (sectorsNeeded > NumDirect - GetNumSectors()) {
-            return FALSE;  // Cannot extend beyond maximum file size
-        }
-
-        // Allocate new sectors
-        for (int i = GetNumSectors(); i < GetNumSectors() + sectorsNeeded; i++) {
-            dataSectors[i] = freeMap->Find();
-            if (dataSectors[i] == -1) {
-                // Not enough free sectors, deallocate the ones we just allocated
-                for (int j = GetNumSectors(); j < i; j++) {
-                    freeMap->Clear(dataSectors[j]);
-                    dataSectors[j] = 0;
+        if (oldNumSectors <= NumDirect && newNumSectors <= NumDirect) {
+            // Case 1: Both old and new sizes use only direct blocks
+            for (int i = oldNumSectors; i < newNumSectors; i++) {
+                dataSectors[i] = freeMap->Find();
+                if (dataSectors[i] == -1) {
+                    // Not enough free sectors, deallocate the ones we just allocated
+                    for (int j = oldNumSectors; j < i; j++) {
+                        freeMap->Clear(dataSectors[j]);
+                        dataSectors[j] = 0;
+                    }
+                    return FALSE;
+                }
+            }
+        } else if (oldNumSectors <= NumDirect && newNumSectors > NumDirect) {
+            // Case 2: Growing from direct-only to using indirect blocks
+            int indirectSectors[NumIndirect];
+            
+            // Fill remaining direct blocks
+            for (int i = oldNumSectors; i < NumDirect; i++) {
+                dataSectors[i] = freeMap->Find();
+                if (dataSectors[i] == -1) {
+                    // Not enough free sectors, deallocate the ones we just allocated
+                    for (int j = oldNumSectors; j < i; j++) {
+                        freeMap->Clear(dataSectors[j]);
+                        dataSectors[j] = 0;
+                    }
+                    return FALSE;
+                }
+            }
+            
+            // Allocate indirect block
+            int indirectSector = freeMap->Find();
+            if (indirectSector == -1) {
+                // Not enough free sectors, deallocate direct blocks we just allocated
+                for (int i = oldNumSectors; i < NumDirect; i++) {
+                    freeMap->Clear(dataSectors[i]);
+                    dataSectors[i] = 0;
                 }
                 return FALSE;
             }
+            dataSectors[NumDirect] = indirectSector;
+            
+            // Allocate sectors for indirect block
+            int numIndirect = newNumSectors - NumDirect;
+            for (int i = 0; i < numIndirect; i++) {
+                indirectSectors[i] = freeMap->Find();
+                if (indirectSectors[i] == -1) {
+                    // Not enough free sectors, deallocate everything
+                    for (int j = oldNumSectors; j < NumDirect; j++) {
+                        freeMap->Clear(dataSectors[j]);
+                        dataSectors[j] = 0;
+                    }
+                    freeMap->Clear(indirectSector);
+                    dataSectors[NumDirect] = -1;
+                    return FALSE;
+                }
+            }
+            
+            // Write indirect block to disk
+            synchDisk->WriteSector(indirectSector, (char *)indirectSectors);
+        } else {
+            // Case 3: Both old and new sizes use indirect blocks
+            int indirectSectors[NumIndirect];
+            synchDisk->ReadSector(dataSectors[NumDirect], (char *)indirectSectors);
+            
+            int oldIndirect = oldNumSectors - NumDirect;
+            int newIndirect = newNumSectors - NumDirect;
+            
+            for (int i = oldIndirect; i < newIndirect; i++) {
+                indirectSectors[i] = freeMap->Find();
+                if (indirectSectors[i] == -1) {
+                    // Not enough free sectors, deallocate the ones we just allocated
+                    for (int j = oldIndirect; j < i; j++) {
+                        freeMap->Clear(indirectSectors[j]);
+                        indirectSectors[j] = 0;
+                    }
+                    return FALSE;
+                }
+            }
+            
+            // Write updated indirect block to disk
+            synchDisk->WriteSector(dataSectors[NumDirect], (char *)indirectSectors);
         }
     }
 
@@ -228,14 +384,39 @@ FileHeader::Print()
 {
     int i, j, k;
     char *data = new char[SectorSize];
+    int numSectors = GetNumSectors();
 
-    printf("FileHeader contents.  File size: %d.  File blocks:\n", numBytes);
-    for (i = 0; i < GetNumSectors(); i++)
-	printf("%d ", dataSectors[i]);
-    printf("\nLast modified: %d (seconds since UTC Jan 1, 1970)\n", modifyTime);
-    printf("File contents:\n");
-    for (i = k = 0; i < GetNumSectors(); i++) {
-	synchDisk->ReadSector(dataSectors[i], data);
+    printf("FileHeader contents.  File size: %d.  File modification time: ", numBytes);
+    PrintTime(modifyTime);
+    printf(".  File blocks:\n");
+    
+    if (numSectors <= NumDirect) {
+	// Only direct blocks
+	for (i = 0; i < numSectors; i++)
+	    printf("%d ", dataSectors[i]);
+    } else {
+	// Direct and indirect blocks
+	for (i = 0; i < NumDirect; i++)
+	    printf("%d ", dataSectors[i]);
+	
+	// Read and print indirect block sectors
+	int indirectSectors[NumIndirect];
+	synchDisk->ReadSector(dataSectors[NumDirect], (char *)indirectSectors);
+	printf("Index2: ");
+	for (i = 0; i < numSectors - NumDirect; i++)
+	    printf("%d ", indirectSectors[i]);
+    }
+    printf("\nFile contents:\n");
+    for (i = k = 0; i < numSectors; i++) {
+	int sector;
+	if (i < NumDirect) {
+	    sector = dataSectors[i];
+	} else {
+	    int indirectSectors[NumIndirect];
+	    synchDisk->ReadSector(dataSectors[NumDirect], (char *)indirectSectors);
+	    sector = indirectSectors[i - NumDirect];
+	}
+	synchDisk->ReadSector(sector, data);
         for (j = 0; (j < SectorSize) && (k < numBytes); j++, k++) {
 	    if ('\040' <= data[j] && data[j] <= '\176')   // isprint(data[j])
 		printf("%c", data[j]);

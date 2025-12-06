@@ -70,6 +70,8 @@ class Directory {
     void Print();			// Verbose print of the contents
 					//  of the directory -- all the file
 					//  names and their contents.
+    int GetTableSize() { return tableSize; }  // Get the table size
+    DirectoryEntry* GetTable() { return table; }  // Get the table entries
 
   private:
     int tableSize;			// Number of directory entries

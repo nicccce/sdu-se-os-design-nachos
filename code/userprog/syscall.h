@@ -29,6 +29,7 @@
 #define SC_Close	8
 #define SC_Fork		9
 #define SC_Yield	10
+#define SC_PrintInt	11
 
 #ifndef IN_ASM
 
@@ -123,6 +124,9 @@ void Fork(void (*func)());
  * or not. 
  */
 void Yield();		
+ 
+/* Print an integer value to the console */ 
+void PrintInt(int value);
 
 #endif /* IN_ASM */
 

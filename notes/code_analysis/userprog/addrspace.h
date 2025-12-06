@@ -1,14 +1,12 @@
 // addrspace.h 
-//	跟踪执行中的用户程序的数据结构
-//	(地址空间)。
+//	跟踪正在执行的用户程序的数据结构（地址空间）。
 //
 //	目前，我们不保存任何关于地址空间的信息。
-//	用户级CPU状态在执行用户程序的线程中
-//	保存和恢复(参见thread.h)。
+//	用户级CPU状态保存和恢复在线程中执行用户程序（见thread.h）。
 //
-// 版权所有 (c) 1992-1993 加州大学董事会。
-// 保留所有权利。请参阅 copyright.h 以获得版权公告和责任限制 
-// 以及保修声明条款。
+// Copyright (c) 1992-1993 The Regents of the University of California.
+// All rights reserved.  See copyright.h for copyright notice and limitation 
+// of liability and disclaimer of warranty provisions.
 
 #ifndef ADDRSPACE_H
 #define ADDRSPACE_H
@@ -16,26 +14,27 @@
 #include "copyright.h"
 #include "filesys.h"
 
-#define UserStackSize		1024 	// 根据需要增加这个值！
+#define UserStackSize		1024 	// 根据需要增加！
 
 class AddrSpace {
   public:
-    AddrSpace(OpenFile *executable);	// 创建一个地址空间，
-					// 用存储在"executable"文件中的程序
-					// 初始化它
-    ~AddrSpace();			// 释放一个地址空间
+    // 构造函数：创建一个地址空间，使用存储在"executable"文件中的程序进行初始化
+    AddrSpace(OpenFile *executable);	
+    // 析构函数：释放一个地址空间
+    ~AddrSpace();			
 
-    void InitRegisters();		// 初始化用户级CPU寄存器，
-					// 在跳转到用户代码之前
+    // 初始化用户级CPU寄存器，在跳转到用户代码之前
+    void InitRegisters();		
 
-    void SaveState();			// 在上下文切换时保存/恢复
-    void RestoreState();		// 地址空间特定信息
+    // 在上下文切换时保存/恢复地址空间特定信息
+    void SaveState();			
+    void RestoreState();		
 
   private:
-    TranslationEntry *pageTable;	// 假设线性页表转换
-					// 现在！
-    unsigned int numPages;		// 虚拟地址空间中的页数
-					// 地址空间
+    // 假设线性页表转换（当前实现）
+    TranslationEntry *pageTable;	
+    // 虚拟地址空间中的页数
+    unsigned int numPages;		
 };
 
 #endif // ADDRSPACE_H

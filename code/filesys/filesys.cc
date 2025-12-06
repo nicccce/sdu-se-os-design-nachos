@@ -339,3 +339,63 @@ FileSystem::Print()
     delete freeMap;
     delete directory;
 }
+
+//----------------------------------------------------------------------
+// FileSystem::PrintDiskInfo
+// 	Print information about the disk usage:
+// 	  total size, used space, free space
+// 	  number of files, total file bytes, total file sectors
+// 	  internal fragmentation
+//----------------------------------------------------------------------
+
+void
+FileSystem::PrintDiskInfo()
+{
+    BitMap *freeMap = new BitMap(NumSectors);
+    Directory *directory = new Directory(NumDirEntries);
+    FileHeader *fileHdr;
+    
+    freeMap->FetchFrom(freeMapFile);
+    directory->FetchFrom(directoryFile);
+    
+    // Calculate disk statistics
+    int totalSectors = NumSectors;
+    int totalBytes = totalSectors * SectorSize;
+    int freeSectors = freeMap->NumClear();
+    int usedSectors = totalSectors - freeSectors;
+    int freeBytes = freeSectors * SectorSize;
+    int usedBytes = usedSectors * SectorSize;
+    
+    // Calculate file statistics
+    int fileCount = 0;
+    int totalFileBytes = 0;
+    int totalFileSectors = 0;
+    DirectoryEntry* table = directory->GetTable();
+    int tableSize = directory->GetTableSize();
+    
+    for (int i = 0; i < tableSize; i++) {
+        if (table[i].inUse) {
+            fileCount++;
+            fileHdr = new FileHeader;
+            fileHdr->FetchFrom(table[i].sector);
+            totalFileBytes += fileHdr->FileLength();
+            totalFileSectors += fileHdr->GetNumSectors();
+            delete fileHdr;
+        }
+    }
+    
+    int totalFileSpace = totalFileSectors * SectorSize;
+    int internalFrag = totalFileSpace - totalFileBytes;
+    
+    // Print disk information
+    printf("Disk size: %d sectors, %d bytes.\n", totalSectors, totalBytes);
+    printf("Used: %d sectors, %d bytes.\n", usedSectors, usedBytes);
+    printf("Free: %d sectors, %d bytes.\n", freeSectors, freeBytes);
+    printf("%d bytes in %d files, occupy %d bytes(%d sectors).\n", 
+           totalFileBytes, fileCount, totalFileSpace, totalFileSectors);
+    printf("%d bytes of internal fragmentation in %d sectors.\n", 
+           internalFrag, totalFileSectors);
+    
+    delete freeMap;
+    delete directory;
+}

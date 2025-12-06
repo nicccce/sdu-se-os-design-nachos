@@ -19,6 +19,10 @@
 #include "system.h"
 #include "addrspace.h"
 #include "noff.h"
+#include "bitmap.h"
+ 
+// Static bitmap to keep track of physical page allocation 
+static BitMap* physPageBitmap = NULL;
 
 //----------------------------------------------------------------------
 // SwapHeader
@@ -60,7 +64,7 @@ SwapHeader (NoffHeader *noffH)
 AddrSpace::AddrSpace(OpenFile *executable)
 {
     NoffHeader noffH;
-    unsigned int i, size;
+    unsigned int size;
 
     executable->ReadAt((char *)&noffH, sizeof(noffH), 0);
     if ((noffH.noffMagic != NOFFMAGIC) && 
@@ -82,47 +86,95 @@ AddrSpace::AddrSpace(OpenFile *executable)
 
     DEBUG('a', "Initializing address space, num pages %d, size %d\n", 
 					numPages, size);
+// Initialize the physical page bitmap if it hasn't been initialized yet
+    if (physPageBitmap == NULL) {
+        physPageBitmap = new BitMap(NumPhysPages);
+    }
+
 // first, set up the translation 
     pageTable = new TranslationEntry[numPages];
-    for (i = 0; i < numPages; i++) {
-	pageTable[i].virtualPage = i;	// for now, virtual page # = phys page #
-	pageTable[i].physicalPage = i;
+    for (unsigned int i = 0; i < numPages; i++) {
+	pageTable[i].virtualPage = i;	// virtual page number
+	pageTable[i].physicalPage = physPageBitmap->Find(); // allocate physical page
+	ASSERT(pageTable[i].physicalPage >= 0); // make sure allocation succeeded
 	pageTable[i].valid = TRUE;
 	pageTable[i].use = FALSE;
 	pageTable[i].dirty = FALSE;
-	pageTable[i].readOnly = FALSE;  // if the code segment was entirely on 
-					// a separate page, we could set its 
-					// pages to be read-only
+	pageTable[i].readOnly = FALSE;
     }
+
+    // Print address space information for debugging
+    Print();
     
 // zero out the entire address space, to zero the unitialized data segment 
 // and the stack segment
     bzero(machine->mainMemory, size);
 
-// then, copy in the code and data segments into memory
+// then, copy in the code and data segments into memory using page table mapping
     if (noffH.code.size > 0) {
         DEBUG('a', "Initializing code segment, at 0x%x, size %d\n", 
 			noffH.code.virtualAddr, noffH.code.size);
-        executable->ReadAt(&(machine->mainMemory[noffH.code.virtualAddr]),
-			noffH.code.size, noffH.code.inFileAddr);
+        
+        // Load code segment using page table mapping
+        for (int i = 0; i < noffH.code.size; i++) {
+            int virtAddr = noffH.code.virtualAddr + i;
+            int virtPage = virtAddr / PageSize;
+            int offset = virtAddr % PageSize;
+            int physPage = pageTable[virtPage].physicalPage;
+            int physAddr = physPage * PageSize + offset;
+            char ch;
+            executable->ReadAt(&ch, 1, noffH.code.inFileAddr + i);
+            machine->mainMemory[physAddr] = ch;
+        }
     }
     if (noffH.initData.size > 0) {
         DEBUG('a', "Initializing data segment, at 0x%x, size %d\n", 
 			noffH.initData.virtualAddr, noffH.initData.size);
-        executable->ReadAt(&(machine->mainMemory[noffH.initData.virtualAddr]),
-			noffH.initData.size, noffH.initData.inFileAddr);
+            
+        // Load data segment using page table mapping
+        for (int i = 0; i < noffH.initData.size; i++) {
+            int virtAddr = noffH.initData.virtualAddr + i;
+            int virtPage = virtAddr / PageSize;
+            int offset = virtAddr % PageSize;
+            int physPage = pageTable[virtPage].physicalPage;
+            int physAddr = physPage * PageSize + offset;
+            char ch;
+            executable->ReadAt(&ch, 1, noffH.initData.inFileAddr + i);
+            machine->mainMemory[physAddr] = ch;
+        }
     }
+
 
 }
 
 //----------------------------------------------------------------------
 // AddrSpace::~AddrSpace
-// 	Dealloate an address space.  Nothing for now!
+// 	Deallocate an address space, freeing physical pages.
 //----------------------------------------------------------------------
 
 AddrSpace::~AddrSpace()
 {
-   delete [] pageTable;
+    // Free physical pages allocated to this address space
+    for (unsigned int i = 0; i < numPages; i++) {
+        physPageBitmap->Clear(pageTable[i].physicalPage);
+    }
+    delete [] pageTable;
+}
+
+//----------------------------------------------------------------------
+// AddrSpace::Print
+// 	Print address space information for debugging
+//----------------------------------------------------------------------
+
+void AddrSpace::Print()
+{
+    printf("--- Address Space Information ---\n");
+    printf("Number of pages: %d\n", numPages);
+    for (unsigned int i = 0; i < numPages; i++) {
+        printf("Virtual page %d -> Physical page %d\n", 
+               pageTable[i].virtualPage, pageTable[i].physicalPage);
+    }
+    printf("------------------------------\n");
 }
 
 //----------------------------------------------------------------------
@@ -181,3 +233,5 @@ void AddrSpace::RestoreState()
     machine->pageTable = pageTable;
     machine->pageTableSize = numPages;
 }
+
+
