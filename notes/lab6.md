@@ -10,33 +10,102 @@
 
 为了解决这个问题，我首先在addrspace.cc中引入了一个静态BitMap变量来跟踪物理页面的分配情况：
 
-[代码截图2：addrspace.cc - 静态BitMap变量声明]
+![image-20251208145757208](lab6.assets/image-20251208145757208.png)
 
 这个BitMap会在第一个AddrSpace对象创建时初始化，大小为NumPhysPages，用于标记哪些物理页面已经被分配。接下来，我修改了AddrSpace构造函数中的页面分配逻辑，将原来固定的1:1映射改为使用physPageBitmap->Find()来分配未使用的物理页面，这样每个程序都能获得不同的物理页面，避免了地址冲突。
 
 为了便于调试和观察地址空间的分配情况，我实现了Print函数来打印当前用户程序的内存占用情况，即虚拟地址和物理地址的对应关系：
 
-[代码截图3：addrspace.cc - AddrSpace::Print函数实现]
-
-这个函数会在每个地址空间创建完成后自动调用，帮助我们验证多道程序的内存分配是否正确。同时，我还需要在addrspace.h中添加Print函数的声明，确保编译器能够正确识别这个函数：
-
-[代码截图4：addrspace.h - Print函数声明]
+![image-20251208145820964](lab6.assets/image-20251208145820964.png)
 
 在代码段和数据段加载方面，我修改了原来的加载逻辑。原始代码直接将程序的代码和数据加载到与虚拟地址相同的物理地址，这在多道程序环境下是不可行的。我改为通过页表映射的方式加载：
 
-[代码截图5：addrspace.cc - 代码段和数据段加载的页表映射]
+![image-20251208150023124](lab6.assets/image-20251208150023124.png)
 
 对于每个字节，先计算其虚拟地址对应的虚拟页号和页内偏移，然后通过页表找到对应的物理页面，最后计算出物理地址进行加载。这样确保了用户程序的代码和数据被正确地加载到通过页表映射的物理地址。
 
 另外，我还修改了析构函数，在地址空间销毁时释放已分配的物理页面：
 
-[代码截图6：addrspace.cc - 析构函数实现]
+![image-20251208150050304](lab6.assets/image-20251208150050304.png)
 
 这是通过遍历页表，对每个页表项调用physPageBitmap->Clear()来实现的，确保物理页面能够被回收并重新分配给其他程序使用。
 
 Exec系统调用允许一个用户程序启动另一个用户程序，并且新程序运行在独立的地址空间中，不覆盖调用者的地址空间。我的实现思路是：当用户程序调用Exec时，系统需要创建一个新的地址空间和线程，然后将控制权转移给新程序，同时保持原程序的状态。在exception.cc的ExceptionHandler函数中，我添加了Exec系统调用的处理逻辑：
 
-[代码截图7：exception.cc - Exec系统调用实现]
+```
+void
+ExceptionHandler(ExceptionType which)
+{
+    int type = machine->ReadRegister(2);
+
+    if ((which == SyscallException) && (type == SC_Halt)) {
+        DEBUG('a', "Shutdown, initiated by user program.\n");
+        interrupt->Halt();
+    } 
+    else if ((which == SyscallException) && (type == SC_Exec)) {
+        // Exec system call implementation
+        printf("Execute system call of Exec() \n");
+        char filename[50];
+        int addr = machine->ReadRegister(4);
+        int i = 0;
+        do {
+            machine->ReadMem(addr + i, 1, (int *)&filename[i]);
+        } while (filename[i++] != '\0');
+
+        printf("Exec(%s):\n", filename);
+
+        OpenFile *executable = fileSystem->Open(filename);
+        if (executable == NULL) {
+            printf("Unable to open file %s\n", filename);
+            machine->WriteRegister(2, -1);  // return -1 on failure
+            AdvancePC();
+            return;
+        }
+
+        AddrSpace *space = new AddrSpace(executable);
+        delete executable;
+
+        Thread *thread = new Thread("exec thread");
+        thread->space = space;
+
+          
+        // space->RestoreState();
+
+        machine->WriteRegister(2, (int)space);  // return space pointer as ID
+        AdvancePC();
+        // Save current thread's user state before forking
+        currentThread->SaveUserState();
+
+        scheduler->ReadyToRun(currentThread);
+
+        currentThread = thread;
+        space->InitRegisters();  
+        space->RestoreState();
+
+        machine->Run();
+        // Use Fork to properly initialize the new thread
+        // Fork will automatically put the new thread on ready queue
+        // thread->Fork((VoidFunctionPtr)UserThreadStart, 0);
+        
+        // // Put current thread on ready queue and yield
+        // // scheduler->ReadyToRun(currentThread);
+        // currentThread->Yield();                 // current thread yields, scheduler will pick next thread
+    
+    }
+    else if ((which == SyscallException) && (type == SC_PrintInt)) {
+        // PrintInt system call implementation
+        int value = machine->ReadRegister(4);  // get argument from register r4
+        printf("%d", value);
+        machine->WriteRegister(2, value);      // return value
+        AdvancePC();
+        return;
+    }
+    else {
+        printf("Unexpected user mode exception %d %d\n", which, type);
+        ASSERT(FALSE);
+    }
+}
+```
 
 首先，从寄存器r4中获取文件名地址，然后使用machine->ReadMem逐字节读取文件名，直到遇到字符串结束符'\0'。接着，尝试打开指定的文件，如果文件不存在或无法打开，则返回-1表示失败。如果文件打开成功，则创建一个新的AddrSpace对象，这个对象会使用我们修改后的构造函数，通过位图分配独立的物理页面，确保与原程序不冲突。
 
@@ -44,7 +113,7 @@ Exec系统调用允许一个用户程序启动另一个用户程序，并且新�
 
 在实现过程中，我发现系统调用后需要正确更新程序计数器，否则会导致无限循环执行同一个系统调用。因此，我实现了AdvancePC函数：
 
-[代码截图8：exception.cc - AdvancePC函数实现]
+![image-20251208150135602](lab6.assets/image-20251208150135602.png)
 
 该函数读取当前PC和NextPC寄存器的值，然后更新PrevPC、PC和NextPC寄存器，确保程序能够继续执行下一条指令。
 
@@ -52,15 +121,15 @@ Exec系统调用允许一个用户程序启动另一个用户程序，并且新�
 
 PrintInt系统调用的实现相对简单。首先在syscall.h中添加了系统调用号SC_PrintInt定义为11，并添加了PrintInt函数的声明：
 
-[代码截图9：syscall.h - PrintInt系统调用定义]
+![image-20251208164027589](lab6.assets/image-20251208164027589.png)
 
 然后在start.s中添加了PrintInt的汇编stub：
 
-[代码截图10：start.s - PrintInt汇编stub]
+![image-20251208164212990](lab6.assets/image-20251208164212990.png)
 
 最后在exception.cc的ExceptionHandler函数中添加了PrintInt系统调用的处理逻辑：
 
-[代码截图11：exception.cc - PrintInt系统调用实现]
+![image-20251208163830764](lab6.assets/image-20251208163830764.png)
 
 从寄存器r4读取要打印的整数值，使用printf输出，然后将返回值写入寄存器r2，最后调用AdvancePC更新程序计数器。
 
@@ -74,23 +143,15 @@ fork()系统调用会创建一个新的进程，子进程是父进程的副本�
 
 为了实现写时复制机制，需要扩展TranslationEntry结构，添加COW（Copy-on-Write）标志位和引用计数：
 
-[代码截图12：addrspace.h - 扩展TranslationEntry结构]
-
-维护一个引用计数器，跟踪共享页面的进程数量，当引用计数为1且页面被写入时，直接写入；否则需要复制页面。同时，需要修改ExceptionHandler来处理页面错误异常：
-
-[代码截图13：exception.cc - 写时复制页面错误处理]
+维护一个引用计数器，跟踪共享页面的进程数量，当引用计数为1且页面被写入时，直接写入；否则需要复制页面。同时，需要修改ExceptionHandler来处理页面
 
 实现页面分配和复制的逻辑，正确管理页面引用计数和内存释放。
 
 ## 测试
 
-为了测试多道用户程序和系统调用的实现，我编写了两个测试程序：exec.c和halt2.c。exec.c程序首先调用PrintInt打印数字12345，然后调用Exec系统调用启动halt2.noff程序，最后调用Halt系统调用停止系统：
+为了测试多道用户程序和系统调用的实现，我编写了两个测试程序：exec.c和halt2.c。exec.c程序首先调用PrintInt打印数字12345，然后调用Exec系统调用启动halt2.noff程序，最后调用Halt系统调用停止系统。
 
-[代码截图14：code/test/exec.c - 测试程序1]
-
-halt2.c程序则简单地调用PrintInt打印数字67890，然后调用Halt系统调用停止系统：
-
-[代码截图15：code/test/halt2.c - 测试程序2]
+halt2.c程序则简单地调用PrintInt打印数字67890，然后调用Halt系统调用停止系统。
 
 测试步骤如下：
 

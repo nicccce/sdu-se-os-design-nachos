@@ -222,11 +222,15 @@ Thread::Yield ()
     
     DEBUG('t', "Yielding thread \"%s\"\n", getName());
     
+    scheduler->ReadyToRun(this);
+
     nextThread = scheduler->FindNextToRun();
-    if (nextThread != NULL) {
-	scheduler->ReadyToRun(this);
-	scheduler->Run(nextThread);
+    ASSERT(nextThread != NULL);
+    
+    if (nextThread != this) {
+	    scheduler->Run(nextThread);
     }
+    // Don't forget to restore interrupts
     (void) interrupt->SetLevel(oldLevel);
 }
 
