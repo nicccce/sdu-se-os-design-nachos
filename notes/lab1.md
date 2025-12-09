@@ -1642,32 +1642,158 @@ code/lab7/n7screen.txt
 注1：要求用耗费用户内存比较多的code/test/sort.c作为虚拟内存的用户测试程序。可根据需要适当修改ARRAYSIZE值的大小，但不要修改除此之外的其他sort.c代码。
 
 注2：可以让Nachos直接运行用户程序sort。也可以先运行一个Nachos用户程序，然后第一个Nachos用户程序用Exec()系统调用来运行sort。二者在演示验收时只需演示一个即可。
-现在请你完成实验的第一部分，其中测试文件和测试文件的编译都在@code/lab6/ 内完成，不要动外面的编译配置，然后filesys这些文件肯定要修改，修改前备份一下，并把nachos原来的文件系统实现方式和你的调整和拓展的实验过程写进@notes/lab6.md
-要求语言连贯成段，不要分小点，尽量不要使用 -  。需要贴代码的地方留空说明要什么文件的什么方法，我稍后会截图补充
+我已经完成了所有实验要求，你需要做的是
+1.我的lab7中的addrspace.cc中的内容调整，改成为在code中的addrspace.cc的内容基础上加东西（修改的是lab7的addrspace.cc），但功能保持不变。
+2.把处理SC_Exec系统调用的流程换回我原来在code中的实现。
+3.把代码的命名什么的改得更加规范。
+，实验过程写进@notes/lab7.md，需要修改的文件放複製到/code/lab7中寫（編譯的時候會會優先編譯lab7中），实验报告语言語言模仿後面給你的
 
-   這是往届学长的优秀实验过程你可以参考和学习：
+要求语言连贯成段，不要分小点，尽量不要使用 -  。需要贴代码的地方留空说明要什么文件的什么方法，我稍后会截图补充
+測試部分你只需要留空就行，我來補充
+
+   這是我目前的实验过程：
 1.实现纯按需调页的、用户进程帧数为5的FIFO页置换算法：
 类似于实验六，我们在调用-x命令后系统会调用StartProcess方法来实现用户进程的运行，而此方法中关键部分为AddrSpace构造方法和Run之后出现异常而调用的ExceptionHandler方法。因此我们从这儿展开。
 
 AddrSpace构造方法
 在构造方法中，我们需要首先读取并计算用户进程地址空间需要的大小，随后为其分配并初始化：
 
-102行之前的方法与实验6基本一致，我将初始化页表和文件地址的方法分别写到了两个封装后的方法中。
+68    AddrSpace::AddrSpace(OpenFile *executable)
+69    {
+70        pagecount = 0;
+71        for (int i = 0; i < 128; i++)
+72        {
+73            if (spaceIds[i] == 0)
+74            {
+75                spaceIds[i] = 1;
+76                break;
+77            }
+78        }
+79
+80        NoffHeader noffh;
+81        unsigned int i, size;
+82        this->executable = executable;
+83        executable->ReadAt((char *)&noffh, sizeof(noffh), 0);
+84        if ((noffh.noffMagic != NOFFMAGIC) ||
+85            (noffh.numPages > NumPhysPages))
+86            panic("Invalid executable image");
+87        ASSERT(noffh.noffMagic == NOFFMAGIC);
+88
+89        // how big is address space?
+90        size = noffh.codeSize + noffh.initDataSize + noffh.uninitDataSize + UserStackSize; // we need to increase the size
+91        printf("Size: %d, Memory size: %d\n", size, UserStackSize);
+92        printf("Max frames for user process: %d, Swap file: SWAP0, Page replacement algorithm: FIFO\n", NumPhysPages);
+93
+94        numPages = divRoundUp(size, PageSize);
+95        size = numPages * PageSize;
+96        DEBUG('a', "Initializing address space, num pages %d, size %d\n", numPages, size);
+97
+98        InitPageTable();
+99        InitUserMem();
+100       Print();
+101   }
+
+99行之前的方法与实验6基本一致，我将初始化页表和文件地址的方法分别写到了两个封装后的方法中。
 首先是初始化页表。在初始化页表时，需要为页表初始化一些属性，如虚拟页号、是否dirty等。同时，如果是用户栈，需要将此页的类型修改为用户栈类型（我为页表新增type属性以便后续写入）。
 同时，初始化文件地址的方法主要负责为各种段分配地址空间并存到机器的主存中。首先以noff文件的格式读取运行文件头，随后依次判断文件的代码段、初始化数据段、未初始化数据段是否存在，如果存在的话就取出这段所对应的页并设置此页的类型和地址，以便后续修改。
 
 页错误系统调用
 随后，我们前往exception类新增页错误后的系统调用方法，核心思想为读取出缺页寄存器中存储的地址，随后将此地址转换为虚拟页号并调用FIFO换页方法换页：
-
+109     else if (which == PageFaultException)
+110     {
+111         int badVAddr = (int)machine->ReadRegister(BadVAddrReg);
+112         int vpn = (unsigned)badVAddr / PageSize;
+113         printf("Demand page %d", vpn);
+114         int k = currentThread->space->FIFO(badVAddr);
+115         stats->numPageFaults++;
+116         stats->numWriteBack = stats->numWriteBack + k;
+117     }
 FIFO方法的实现方式主要有两个步骤：首先判断是否是最初的5个页，随后，如果是最初的5个页，我们只需要将新页写入pageTable并读取新页数据；如果不是，则调用swap方法。
 由于我们需要实现纯按需调页，而纯按需调页要求在一开始不读取页表到内存，而是在需要时发生页错误中断并调用页置换方法来实现新页的换入。但是，如果是传统的旧页换出、新页换入，我们只需要用旧页的物理地址替换新页的物理地址即可，但是如果是初始的前五个页，我们不存在旧页的说法，那么我们只需要通过维护一个pagenum，每次读入新页后加一来顺序分配前五个页的物理地址即可。因此，我们维护一个pagenum数组，初始值为0，当每次执行FIFO时加1，如果超过5说明后续换页都是旧页换出新页换入，是传统的页置换。如果在5以内，说明只需要将新页换入内存并分配地址空间为pagenum即可。具体方式如下：
+int AddrSpace::FIFO(int badVAddr)
+{
+    unsigned int oldPage;
+    unsigned int newPage;
+    unsigned int tap;
 
+    Translate(badVAddr, &newPage, &tap);
+    pagenum++;
+
+    if (pagenum <= 5)
+    {
+        pageTable[newPage].virtualPage = newPage;
+        pageTable[newPage].use = true;
+        pageTable[newPage].dirty = false;
+        pageTable[newPage].readOnly = false;
+        pageTable[newPage].physicalPage = pagenum - 1;
+        pageTable[newPage].valid = true;
+        printf("inframe %d\n", pagenum - 1);
+        virtualMem[pagenum - 1] = newPage;
+        ReadIn(newPage);
+        Print();
+        return 0;
+    }
+    else
+    {
+        oldPage = virtualMem[point_vm];  // 获取要淘汰的页
+        point_vm = (point_vm + 1) % NumPages;  // 移动指针
+        virtualMem[point_vm] = newPage;  // 新页加入队列
+        return Swap(oldPage, newPage);  // 执行交换
+    }
+}
 关于传统的页置换，我们需要调用Swap方法实现旧页换出和新页换入，因此我们在Swap中依次调用WriteBack和ReadIn方法实现上述两个功能。同时，Swap函数返回值为WriteBack函数的返回值，也就是写回的页数目，如果写回的页是dirty，那么为1，否则为0。
 在WriteBack方法中，首先判断旧页是否为dirty，如果是的话则 根据页的类型判断如何写入。一般情况下，我们需要写入的为用户栈空间，这里我们借用了在运行示例程序n7后生成的SWAP0文件作为我们的磁盘来写。具体方式如下：
-
+int AddrSpace::WriteBack(int oldPage)
+{
+    if (pageTable[oldPage].dirty)
+    {
+        switch (pageTable[oldPage].type)
+        {
+        case vmcode:
+            executable->WriteAt(machine->mainMemory + pageTable[oldPage].physicalPage * PageSize, PageSize, pageTable[oldPage].inFileAddr);
+            break;
+        case vmdata:
+            executable->WriteAt(machine->mainMemory + pageTable[oldPage].physicalPage * PageSize, PageSize, pageTable[oldPage].inFileAddr);
+            break;
+        case vmuninitData:
+            if (pageTable[oldPage].inFileAddr == -1)
+            {
+                // 查找交换空间中的位置
+                swapFile->FindInSpaceID(spaceID + NumPhysPages, pageTable[oldPage].physicalPage * PageSize);
+                swapFile->WriteAt(machine->mainMemory + pageTable[oldPage].physicalPage * PageSize, PageSize, pageTable[oldPage].inFileAddr);
+            }
+            break;
+        case vmstack:
+            swapFile->FindInSpaceID(spaceID + NumPhysPages, pageTable[oldPage].physicalPage * PageSize);
+            swapFile->WriteAt(machine->mainMemory + pageTable[oldPage].physicalPage * PageSize, PageSize, pageTable[oldPage].inFileAddr);
+            break;
+        }
+        pageTable[oldPage].dirty = false;  // 清除脏位
+    }
+    return 0;
+}
 
 在写回后，我们在Swap方法中为初始化新页的属性，随后执行ReadIn方法。ReadIn方法的主要作用为根据不同页的类型前往不同的地址处读取文件并存储到machine的mainMenory中。具体实现方式如下：
-
+357 void AddrSpace::ReadIn(int newPage)
+358 {
+359     switch (pageTable[newPage].type)
+360     {
+361     case vmcode:
+362         executable->ReadAt((machine->mainMemory[pageTable[newPage].physicalPage * PageSize]), PageSize,
+363             pageTable[newPage].inFileAddr);
+364         break;
+365     case vmuninitData:
+366     case vmuserStack:
+367         if (pageTable[newPage].inFileAddr >= 0)
+368         {
+369             swapFile->ReadAt((machine->mainMemory[pageTable[newPage].physicalPage * PageSize]), PageSize,
+370                 pageTable[newPage].inFileAddr);
+371             swapMap->Clear(pageTable[newPage].inFileAddr / PageSize);
+372             pageTable[newPage].inFileAddr = -1;
+373         }
+374         break;
+375     }
+376 }
 
 至此，我们便实现了纯按需调页的、用户进程帧数为5的FIFO页置换算法。运行结果较大，我们放置到最后展示。
 
@@ -1703,4 +1829,6 @@ LRU置换：
 随后，我们开始执行OPT方法 。在执行开始同样的执行，我们需要改的是出现页错误后调用的方法，我们在addrspace.cc类中新增OPT方法，当调用此方法后，我们首先使用AddrSpace::Translate方法得到需要换入的页，随后判断是否为前五个初始需要直接换入不换出的页，如果是则直接换入，如果不是，那么要找我们需要换出的页。我们首先设置一个宏变量LOOKAHEAD，表示在做换出新页决策时向前看多少个页，再增加一个大小为5的数组appearNum[]记录每个帧在后面LOOKAHEAD个页中出现的次数。然后执行循环算法，从此页的位置处向后看Translate个，每次循环体内就循环现在有的5个帧，如果看到的这个页在我们的帧上则加一，即appearNum[j]++。结束之后我们找出appearNum数组中加的次数最小的那个帧并选择将其换出，换出时执行Swap算法类似于先前的换入换出即可。
 当然，我们也需要在system类中增加pagepos属性记录执行到了哪一页，并在每次读或者写页时自增。
 ```
+
+
 

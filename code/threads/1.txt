@@ -1,0 +1,112 @@
+Entering ThreadTestForking thread "forked thread 1" with func = 0x57b323ed, arg = 1
+Putting thread forked thread 1 on ready list with priority 1.
+Forking thread "forked thread 2" with func = 0x57b323ed, arg = 2
+Putting thread forked thread 2 on ready list with priority 2.
+Forking thread "forked thread 3" with func = 0x57b323ed, arg = 3
+Putting thread forked thread 3 on ready list with priority 3.
+*** thread 0 looped 0 times, priority=0
+Yielding thread "main"
+Putting thread main on ready list with priority 0.
+Found thread main with priority 0 to run.
+*** thread 0 looped 1 times, priority=0
+Yielding thread "main"
+Putting thread main on ready list with priority 0.
+Found thread main with priority 0 to run.
+*** thread 0 looped 2 times, priority=0
+Yielding thread "main"
+Putting thread main on ready list with priority 0.
+Found thread main with priority 0 to run.
+*** thread 0 looped 3 times, priority=0
+Yielding thread "main"
+Putting thread main on ready list with priority 0.
+Found thread main with priority 0 to run.
+*** thread 0 looped 4 times, priority=0
+Yielding thread "main"
+Putting thread main on ready list with priority 0.
+Found thread main with priority 0 to run.
+Finishing thread "main"
+Sleeping thread "main"
+Found thread forked thread 1 with priority 1 to run.
+Switching from thread "main" to thread "forked thread 1"
+*** thread 1 looped 0 times, priority=1
+Yielding thread "forked thread 1"
+Putting thread forked thread 1 on ready list with priority 1.
+Found thread forked thread 1 with priority 1 to run.
+*** thread 1 looped 1 times, priority=1
+Yielding thread "forked thread 1"
+Putting thread forked thread 1 on ready list with priority 1.
+Found thread forked thread 1 with priority 1 to run.
+*** thread 1 looped 2 times, priority=1
+Yielding thread "forked thread 1"
+Putting thread forked thread 1 on ready list with priority 1.
+Found thread forked thread 1 with priority 1 to run.
+*** thread 1 looped 3 times, priority=1
+Yielding thread "forked thread 1"
+Putting thread forked thread 1 on ready list with priority 1.
+Found thread forked thread 1 with priority 1 to run.
+*** thread 1 looped 4 times, priority=1
+Yielding thread "forked thread 1"
+Putting thread forked thread 1 on ready list with priority 1.
+Found thread forked thread 1 with priority 1 to run.
+Finishing thread "forked thread 1"
+Sleeping thread "forked thread 1"
+Found thread forked thread 2 with priority 2 to run.
+Switching from thread "forked thread 1" to thread "forked thread 2"
+*** thread 2 looped 0 times, priority=2
+Yielding thread "forked thread 2"
+Putting thread forked thread 2 on ready list with priority 2.
+Found thread forked thread 2 with priority 2 to run.
+*** thread 2 looped 1 times, priority=2
+Yielding thread "forked thread 2"
+Putting thread forked thread 2 on ready list with priority 2.
+Found thread forked thread 2 with priority 2 to run.
+*** thread 2 looped 2 times, priority=2
+Yielding thread "forked thread 2"
+Putting thread forked thread 2 on ready list with priority 2.
+Found thread forked thread 2 with priority 2 to run.
+*** thread 2 looped 3 times, priority=2
+Yielding thread "forked thread 2"
+Putting thread forked thread 2 on ready list with priority 2.
+Found thread forked thread 2 with priority 2 to run.
+*** thread 2 looped 4 times, priority=2
+Yielding thread "forked thread 2"
+Putting thread forked thread 2 on ready list with priority 2.
+Found thread forked thread 2 with priority 2 to run.
+Finishing thread "forked thread 2"
+Sleeping thread "forked thread 2"
+Found thread forked thread 3 with priority 3 to run.
+Switching from thread "forked thread 2" to thread "forked thread 3"
+*** thread 3 looped 0 times, priority=3
+Yielding thread "forked thread 3"
+Putting thread forked thread 3 on ready list with priority 3.
+Found thread forked thread 3 with priority 3 to run.
+*** thread 3 looped 1 times, priority=3
+Yielding thread "forked thread 3"
+Putting thread forked thread 3 on ready list with priority 3.
+Found thread forked thread 3 with priority 3 to run.
+*** thread 3 looped 2 times, priority=3
+Yielding thread "forked thread 3"
+Putting thread forked thread 3 on ready list with priority 3.
+Found thread forked thread 3 with priority 3 to run.
+*** thread 3 looped 3 times, priority=3
+Yielding thread "forked thread 3"
+Putting thread forked thread 3 on ready list with priority 3.
+Found thread forked thread 3 with priority 3 to run.
+*** thread 3 looped 4 times, priority=3
+Yielding thread "forked thread 3"
+Putting thread forked thread 3 on ready list with priority 3.
+Found thread forked thread 3 with priority 3 to run.
+Finishing thread "forked thread 3"
+Sleeping thread "forked thread 3"
+No threads ready or runnable, and no pending interrupts.
+Assuming the program completed.
+Machine halting!
+
+Ticks: total 270, idle 0, system 270, user 0
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 0, sent 0
+
+Cleaning up...
+root@ad5b86379a87:~/sdu-se-os-design-nachos/code/lab2# 
