@@ -3,5 +3,5 @@ arch/unknown-i386-linux/depends/sysdep.d arch/unknown-i386-linux/objects/sysdep.
  ../machine/sysdep.h ../threads/system.h ../threads/thread.h \
  ../machine/machine.h ../lab7/translate.h ../machine/disk.h \
  ../lab7/addrspace.h ../filesys/filesys.h ../filesys/openfile.h \
- ../lab7/bitmap.h ../threads/scheduler.h ../machine/stats.h \
+ ../lab7/bitmap.h ../threads/scheduler.h ../lab7/stats.h \
  ../machine/timer.h

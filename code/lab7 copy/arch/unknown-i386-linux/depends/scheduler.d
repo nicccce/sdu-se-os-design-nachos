@@ -3,5 +3,5 @@ arch/unknown-i386-linux/depends/scheduler.d arch/unknown-i386-linux/objects/sche
  ../threads/bool.h ../machine/sysdep.h ../threads/thread.h \
  ../machine/machine.h ../lab7/translate.h ../machine/disk.h \
  ../lab7/addrspace.h ../filesys/filesys.h ../filesys/openfile.h \
- ../lab7/bitmap.h ../threads/system.h ../lab7/interrupt.h \
- ../machine/stats.h ../machine/timer.h
+ ../lab7/bitmap.h ../threads/system.h ../lab7/interrupt.h ../lab7/stats.h \
+ ../machine/timer.h

@@ -148,7 +148,7 @@ ExceptionHandler(ExceptionType which)
         int num = machine->ReadRegister(4);
         printf("exit!the A[0] is %d\n", num);
         AdvancePC();
-        currentThread->Finish();
+        interrupt->Halt();
     }
     else if (which == PageFaultException)
     {
